@@ -1,0 +1,50 @@
+# Build directories
+build/
+build-x86/
+build-x64/
+build-host-x86/
+
+# CMake cache and generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+
+# Visual Studio
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.slnx
+*.suo
+*.user
+*.VC.db
+*.VC.VC.opendb
+.vs/
+
+# Compiled output
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.obj
+
+# JUCE generated
+JuceLibraryCode/
+
+# Temporary / runtime files
+*.dat
+*.tmp
+
+# Debug logs written to Desktop (not in repo)
+MyApp_debug_log.txt
+MyApp_worker_log.txt
+MyApp_log.txt
+
+# CMake test output
+Testing/
+
+
+# Windows
+Thumbs.db
