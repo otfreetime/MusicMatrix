@@ -1,5 +1,6 @@
 #include "PluginBridgeWorker.h"
 #include "AudioSharedMemory.h"
+#include "../debug/DebugLogger.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -138,7 +139,6 @@ bool PluginBridgeWorker::start (const juce::String& commandLine)
 void PluginBridgeWorker::stop()
 {
     hwndRetryTimer.reset();
-    audioProcessingTimer.reset();
     running = false;
     loadedPluginPath.clear();
     cleanupSharedMemory();
@@ -189,39 +189,46 @@ bool PluginBridgeWorker::loadPlugin (const juce::String& pluginPath)
     }
 
     sendStatus ("plugin_instance_created");
-    DBG ("PluginBridgeWorker: Plugin instance created, sampleRate=" + juce::String (sampleRate));
+    DEBUG_LOG ("PluginBridgeWorker: Plugin instance created");
 
+    // Use default values initially, but host will override via setupAudio command
     sampleRate = 44100;
     blockSize = 512;
-    pluginInstance->setPlayConfigDetails (2, 2, sampleRate, blockSize);
-    pluginInstance->prepareToPlay (sampleRate, blockSize);
-    isProcessing = true;
     
-    DBG ("PluginBridgeWorker: Plugin prepared, setting up shared memory");
-    
-    // Prepare audio buffer
+    // Prepare audio buffer with default size (will be resized by setupAudio)
     audioBuffer.setSize (2, blockSize);
     audioBuffer.clear();
     midiBuffer.clear();
     
+    DEBUG_LOG ("PluginBridgeWorker: Waiting for setupAudio command from host");
+    
     // Setup shared memory for audio I/O
     if (setupSharedMemory())
     {
+        DEBUG_LOG ("PluginBridgeWorker: Shared memory setup successful");
+        
+        // CRITICAL: Send status messages to host so it knows to send setupAudio command
         sendStatus ("shared_memory_ready");
         sendStatus ("shared_memory_paths:" + inputMemoryFile.getFullPathName() + "|" + outputMemoryFile.getFullPathName());
-
-        // Start a timer on the message thread to drive audio processing
-        // Using 100ms interval instead of 10ms to reduce CPU and avoid plugin crashes
-        // Some plugins (like EasternONE) crash with continuous rapid processBlock calls
-        DBG ("PluginBridgeWorker: Starting audio timer at 100ms interval");
+        
+        DEBUG_LOG ("PluginBridgeWorker: Sent shared_memory_ready and paths to host");
+        
+        // Start a real-time thread to drive audio processing
         juce::MessageManager::callAsync ([this]
         {
-            audioProcessingTimer = std::make_unique<AudioProcessingTimer> (*this);
-            audioProcessingTimer->startTimer (10); // 10ms tick; tickAudio() self-throttles via ring buffer free-space check
+            DEBUG_LOG ("PluginBridgeWorker: Starting real-time audio thread");
+            if (! audioWorkerThread)
+            {
+                audioWorkerThread = std::make_unique<AudioWorkerThread> (*this);
+                audioWorkerThread->startThread (juce::Thread::Priority::highest);
+            }
         });
     }
     else
+    {
+        DEBUG_LOG ("PluginBridgeWorker: Shared memory setup FAILED");
         sendStatus ("warning:shared_memory_failed");
+    }
     
     sendStatus ("plugin_prepared");
     DBG ("PluginBridgeWorker: Plugin prepared, creating editor");
@@ -352,6 +359,38 @@ void PluginBridgeWorker::publishEditorWindowHandleWithRetry (int attemptsRemaini
     hwndRetryTimer->startTimer (100);
 }
 
+void PluginBridgeWorker::AudioWorkerThread::run()
+{
+    DEBUG_LOG ("AudioWorkerThread: Started running");
+    
+    while (! threadShouldExit())
+    {
+        if (ownerWorker.isProcessing && ownerWorker.pluginInstance != nullptr)
+        {
+            // Try to tick audio. If it didn't process anything (buffer full/empty), yield briefly.
+            int processed = 0;
+            if (ownerWorker.audioOutputMemory)
+            {
+                const int freeSpace = audioRingBufferGetFreeSpace(ownerWorker.audioOutputMemory->getData());
+                if (freeSpace >= ownerWorker.blockSize)
+                {
+                    ownerWorker.tickAudio();
+                    processed = 1;
+                }
+            }
+            
+            if (processed == 0)
+                wait (1); // 1ms sleep prevents busy-spinning when buffer is full
+        }
+        else
+        {
+            wait (5); // idle state
+        }
+    }
+    
+    DEBUG_LOG ("AudioWorkerThread: Exiting");
+}
+
 void PluginBridgeWorker::tickAudio()
 {
     // Only call processBlock when there is room in the ring buffer.
@@ -359,7 +398,7 @@ void PluginBridgeWorker::tickAudio()
     // and prevents crashing plugins that misbehave under continuous rapid calls.
     if (audioOutputMemory)
     {
-        const int freeSpace = myapp::bridge::audioRingBufferFreeSpace (audioOutputMemory->getData());
+        const int freeSpace = myapp::bridge::audioRingBufferGetFreeSpace (audioOutputMemory->getData());
         if (freeSpace < blockSize)
             return; // Buffer is full enough; skip this tick
     }
@@ -372,6 +411,11 @@ void PluginBridgeWorker::processAudioBlockInternal (juce::AudioBuffer<float>& bu
 {
     if (! pluginInstance || ! audioOutputMemory || ! isProcessing)
         return;
+
+    // IMPORTANT: Ensure the buffer is the exact size required by the current blockSize.
+    // If setupAudio or loadPlugin skipped resizing, buffer.getNumSamples() would be 0, causing complete silence.
+    if (buffer.getNumSamples() != blockSize || buffer.getNumChannels() != 2)
+        buffer.setSize (2, blockSize);
 
     // Clear input buffer (MIDI instrument — no audio input needed)
     buffer.clear();
@@ -389,12 +433,17 @@ void PluginBridgeWorker::processAudioBlockInternal (juce::AudioBuffer<float>& bu
 {
     juce::MessageManager::callAsync ([this]
     {
+        if (pluginInstance != nullptr)
+        {
+            pluginInstance.reset();
+        }
+
         hwndRetryTimer.reset();
-        audioProcessingTimer.reset();
-        pluginEditor.reset();
-        pluginInstance.reset();
+        // audioWorkerThread was removed here because we do it in unloadPlugin or already removed it earlier
+
+        loadedPluginPath.clear();
+        cleanupSharedMemory();
     });
-    loadedPluginPath.clear();
 }
 
 juce::String PluginBridgeWorker::getLastError() const
@@ -404,42 +453,85 @@ juce::String PluginBridgeWorker::getLastError() const
 
 void PluginBridgeWorker::handleCommand (const IPCCommand& command)
 {
-    DBG("PluginBridgeWorker: Received command: " + juce::String(static_cast<int>(command.type)) + " payload: " + command.payload);
-    switch (command.type)
+    if (command.type == IPCCommandType::loadPlugin)
     {
-        case IPCCommandType::loadPlugin:
-            DBG("PluginBridgeWorker: Handling loadPlugin: " + command.payload);
-            sendStatus ("handling_loadPlugin:" + command.payload);
-            if (loadPlugin (command.payload))
-                sendStatus ("plugin_loaded");
-            else
-                sendStatus ("error:plugin_load_failed:" + lastError);
-            break;
-
-        case IPCCommandType::unloadPlugin:
-            DBG("PluginBridgeWorker: Handling unloadPlugin");
-            unloadPlugin();
-            sendStatus ("plugin_unloaded");
-            break;
-
-        case IPCCommandType::setDetached:
-            detached = (command.payload == "true");
-            DBG("PluginBridgeWorker: setDetached: " + command.payload);
-            sendStatus ("detached_mode_set:" + command.payload);
-            break;
-
-        case IPCCommandType::processAudio:
-            tickAudio();
-            break;
-
-        case IPCCommandType::processMidi:
-            // TODO: Implement MIDI processing
-            break;
-
-        default:
-            DBG("PluginBridgeWorker: Unknown command: " + juce::String(static_cast<int>(command.type)));
-            sendStatus ("warning:unknown_command:" + juce::String (static_cast<int> (command.type)));
-            break;
+        DBG("PluginBridgeWorker: Handling loadPlugin");
+        loadPlugin (command.payload);
+    }
+    else if (command.type == IPCCommandType::setupAudio)
+    {
+        DEBUG_LOG ("PluginBridgeWorker: Handling setupAudio - " + command.payload);
+        auto tokens = juce::StringArray::fromTokens (command.payload, ",", "");
+        if (tokens.size() == 2)
+        {
+            sampleRate = tokens[0].getDoubleValue();
+            blockSize = tokens[1].getIntValue();
+            
+            DEBUG_LOG ("PluginBridgeWorker: Setting sampleRate=" + juce::String(sampleRate) 
+                      + ", blockSize=" + juce::String(blockSize));
+            
+            if (pluginInstance != nullptr)
+            {
+                pluginInstance->setPlayConfigDetails (2, 2, sampleRate, blockSize);
+                pluginInstance->prepareToPlay (sampleRate, blockSize);
+                DEBUG_LOG ("PluginBridgeWorker: Plugin prepareToPlay called");
+            }
+            
+            // CRITICAL: Resize audio buffer to match new block size
+            audioBuffer.setSize (2, blockSize);
+            audioBuffer.clear();
+            DEBUG_LOG ("PluginBridgeWorker: audioBuffer resized to " + juce::String(blockSize) + " samples");
+            
+            if (audioInputMemory || audioOutputMemory)
+            {
+                // Re-initialize ring buffer sizes based on block size (e.g., 4x blockSize)
+                int dynamicCapacity = 4 * blockSize;
+                if (dynamicCapacity <= 0) dynamicCapacity = 8190;
+                
+                if (audioInputMemory)
+                {
+                    audioRingBufferInit (audioInputMemory->getData(), dynamicCapacity);
+                    DEBUG_LOG ("PluginBridgeWorker: Input ring buffer reinitialized, capacity=" + juce::String(dynamicCapacity));
+                }
+                if (audioOutputMemory)
+                {
+                    audioRingBufferInit (audioOutputMemory->getData(), dynamicCapacity);
+                    DEBUG_LOG ("PluginBridgeWorker: Output ring buffer reinitialized, capacity=" + juce::String(dynamicCapacity));
+                }
+            }
+            
+            isProcessing = true;
+            DEBUG_LOG ("PluginBridgeWorker: isProcessing=true, audio thread can now process");
+        }
+        else
+        {
+            DEBUG_LOG ("PluginBridgeWorker: setupAudio parsing failed - expected 'sampleRate,blockSize'");
+        }
+    }
+    else if (command.type == IPCCommandType::unloadPlugin)
+    {
+        DBG("PluginBridgeWorker: Handling unloadPlugin");
+        unloadPlugin();
+        sendStatus ("plugin_unloaded");
+    }
+    else if (command.type == IPCCommandType::setDetached)
+    {
+        detached = (command.payload == "true");
+        DBG("PluginBridgeWorker: setDetached: " + command.payload);
+        sendStatus ("detached_mode_set:" + command.payload);
+    }
+    else if (command.type == IPCCommandType::processAudio)
+    {
+        tickAudio();
+    }
+    else if (command.type == IPCCommandType::processMidi)
+    {
+        // TODO: Implement MIDI processing
+    }
+    else
+    {
+        DBG("PluginBridgeWorker: Unknown command: " + juce::String(static_cast<int>(command.type)));
+        sendStatus ("warning:unknown_command:" + juce::String (static_cast<int> (command.type)));
     }
 }
 

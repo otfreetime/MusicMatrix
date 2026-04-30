@@ -53,8 +53,8 @@ public:
 private:
     DebugLogger()
     {
-        auto logFile = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
-                                 .getChildFile ("MyApp_debug_log.txt");
+        // Write log file to workspace directory for easy access during debugging
+        auto logFile = juce::File ("E:\\Maqam Classification\\MyApp\\MyApp_debug_log.txt");
         setFilePath (logFile);
     }
 

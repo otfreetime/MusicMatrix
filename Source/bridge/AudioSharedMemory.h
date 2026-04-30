@@ -1,20 +1,17 @@
 #pragma once
 #include <cstring>
 #include <cstdint>
+#include <atomic>
 
 //==============================================================================
 // Cross-process audio ring buffer via shared memory (output channel only).
 //
 // Memory layout (total = kAudioSharedMemTotalSize bytes):
-//   [0..3]   volatile int32_t writePos  - absolute sample index written by worker
-//   [4..7]   volatile int32_t readPos   - absolute sample index read by host
+//   [0..3]   std::atomic<int32_t> writePos  - absolute sample index written by worker
+//   [4..7]   std::atomic<int32_t> readPos   - absolute sample index read by host
 //   [8..11]  int32_t capacity           - ring buffer capacity (samples per channel)
 //   [12..15] int32_t numChannels        - always 2
 //   [16...]  float[2][capacity]         - planar: ch0 first, then ch1
-//
-// Both writePos and readPos are kept in [0, capacity) via modulo.
-// x86 guarantees naturally-atomic 4-byte aligned reads/writes, which is
-// sufficient here (we only need acquire/release semantics, not CAS).
 //==============================================================================
 
 namespace myapp::bridge
@@ -32,13 +29,19 @@ static constexpr int kAudioRingCapacity =
 
 //==============================================================================
 // Called once after the shared memory file is created/mapped.
-inline void audioRingBufferInit (void* mem) noexcept
+inline void audioRingBufferInit (void* mem, int requestedCapacity = kAudioRingCapacity) noexcept
 {
-    auto* hdr = static_cast<volatile int32_t*> (mem);
-    hdr[0] = 0;                         // writePos
-    hdr[1] = 0;                         // readPos
-    hdr[2] = kAudioRingCapacity;        // capacity
-    hdr[3] = kAudioSharedMemNumChannels;
+    int maxCapacity = (kAudioSharedMemTotalSize - kAudioSharedMemHeaderSize) 
+                      / (kAudioSharedMemNumChannels * (int) sizeof (float));
+    int actualCapacity = requestedCapacity < maxCapacity ? requestedCapacity : maxCapacity;
+
+    auto* hdr = static_cast<std::atomic<int32_t>*> (mem);
+    hdr[0].store(0, std::memory_order_release); // writePos
+    hdr[1].store(0, std::memory_order_release); // readPos
+    
+    auto* rawHdr = static_cast<int32_t*> (mem);
+    rawHdr[2] = actualCapacity;                 // capacity
+    rawHdr[3] = kAudioSharedMemNumChannels;
 
     std::memset (static_cast<char*> (mem) + kAudioSharedMemHeaderSize,
                  0,
@@ -46,54 +49,43 @@ inline void audioRingBufferInit (void* mem) noexcept
 }
 
 //==============================================================================
-// Worker side: push one block of planar float audio into the ring buffer.
-// channelData[ch] must have numSamples elements.
-inline void audioRingBufferWrite (void* mem, const float* const* channelData, int numSamples) noexcept
+// Helper: Get capacities
+inline int audioRingBufferGetCapacity(void* mem) noexcept
 {
-    auto* hdr     = static_cast<volatile int32_t*> (mem);
-    const int cap = hdr[2];
-    const int wp  = hdr[0];
-
-    auto* audio   = reinterpret_cast<float*> (static_cast<char*> (mem) + kAudioSharedMemHeaderSize);
-
-    for (int i = 0; i < numSamples; ++i)
-    {
-        const int pos = (wp + i) % cap;
-        for (int ch = 0; ch < kAudioSharedMemNumChannels; ++ch)
-            audio[ch * cap + pos] = channelData[ch][i];
-    }
-
-    // Publish write position AFTER samples are written (store-release on x86).
-    hdr[0] = (wp + numSamples) % cap;
+    return static_cast<int32_t*>(mem)[2];
 }
 
 //==============================================================================
 // Returns the number of free samples available for writing (worker side).
-inline int audioRingBufferFreeSpace (const void* mem) noexcept
+inline int audioRingBufferGetFreeSpace (void* mem) noexcept
 {
-    auto* hdr     = static_cast<const volatile int32_t*> (mem);
-    const int cap = hdr[2];
-    const int wp  = hdr[0];
-    const int rp  = hdr[1];
-    const int used = (wp - rp + cap) % cap;
-    return cap - used - 1; // -1 to distinguish full from empty
+    auto* hdr = static_cast<std::atomic<int32_t>*> (mem);
+    const int wp  = hdr[0].load(std::memory_order_acquire); // read
+    const int rp  = hdr[1].load(std::memory_order_acquire);
+    const int cap = static_cast<int32_t*>(mem)[2];
+
+    int free = rp - wp - 1;
+    if (free < 0)
+        free += cap;
+    return free;
 }
 
-// Host side: pull numSamples from the ring buffer into planar channelData.
-// Returns the number of samples actually read (may be < numSamples on underrun).
-// Any unfilled portion is zeroed.
-inline int audioRingBufferRead (const void* mem, float** channelData, int numSamples) noexcept
+//==============================================================================
+inline void audioRingBufferRead (void* mem, float** destChannels, int numSamples) noexcept
 {
-    auto* hdr     = static_cast<const volatile int32_t*> (mem);
-    auto* hdrRW   = const_cast<volatile int32_t*> (hdr);
-    const int cap = hdr[2];
+    auto* hdr = static_cast<std::atomic<int32_t>*> (mem);
+    const int wp  = hdr[0].load(std::memory_order_acquire); // Load write pos FIRST (load-acquire).
+    int rp        = hdr[1].load(std::memory_order_relaxed);
+    
+    auto* rawHdr = static_cast<int32_t*>(mem);
+    const int cap = rawHdr[2];
+    const int ch  = rawHdr[3];
 
-    // Load write pos FIRST (load-acquire on x86).
-    const int wp  = hdr[0];
-    const int rp  = hdr[1];
+    int avail = wp - rp;
+    if (avail < 0)
+        avail += cap;
 
-    const int available = (wp - rp + cap) % cap;
-    const int toRead    = (available < numSamples) ? available : numSamples;
+    const int toRead = (avail < numSamples) ? avail : numSamples;
 
     const auto* audio = reinterpret_cast<const float*> (
         static_cast<const char*> (mem) + kAudioSharedMemHeaderSize);
@@ -102,20 +94,46 @@ inline int audioRingBufferRead (const void* mem, float** channelData, int numSam
     {
         const int pos = (rp + i) % cap;
         for (int ch = 0; ch < kAudioSharedMemNumChannels; ++ch)
-            channelData[ch][i] = audio[ch * cap + pos];
+            destChannels[ch][i] = audio[ch * cap + pos];
     }
 
     // Zero-fill any underrun samples.
     if (toRead < numSamples)
     {
         for (int ch = 0; ch < kAudioSharedMemNumChannels; ++ch)
-            std::memset (channelData[ch] + toRead, 0, static_cast<size_t> ((numSamples - toRead) * sizeof (float)));
+            std::memset (destChannels[ch] + toRead, 0, static_cast<size_t> ((numSamples - toRead) * sizeof (float)));
     }
 
-    // Publish updated read pos AFTER reading.
-    hdrRW[1] = (rp + toRead) % cap;
-
-    return toRead;
+    hdr[1].store((rp + toRead) % cap, std::memory_order_release); // Publish read position AFTER reading.
 }
 
+//==============================================================================
+inline void audioRingBufferWrite (void* mem, const float** srcChannels, int numSamples) noexcept
+{
+    auto* hdr = static_cast<std::atomic<int32_t>*> (mem);
+    int wp        = hdr[0].load(std::memory_order_relaxed);
+    const int rp  = hdr[1].load(std::memory_order_acquire); // Load read pos FIRST.
+
+    auto* rawHdr = static_cast<int32_t*>(mem);
+    const int cap = rawHdr[2];
+    const int ch  = rawHdr[3];
+
+    int free = rp - wp - 1;
+    if (free < 0)
+        free += cap;
+
+    const int toWrite = (free < numSamples) ? free : numSamples;
+
+    auto* audio   = reinterpret_cast<float*> (static_cast<char*> (mem) + kAudioSharedMemHeaderSize);
+
+    for (int i = 0; i < toWrite; ++i)
+    {
+        const int pos = (wp + i) % cap;
+        for (int ch = 0; ch < kAudioSharedMemNumChannels; ++ch)
+            audio[ch * cap + pos] = srcChannels[ch][i];
+    }
+
+    // Publish write position AFTER samples are written (store-release).
+    hdr[0].store((wp + toWrite) % cap, std::memory_order_release);
+}
 } // namespace myapp::bridge

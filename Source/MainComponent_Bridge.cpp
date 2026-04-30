@@ -82,6 +82,22 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
             {
                 // Bridge audio shared memory is ready
                 bridgePluginLoaded = true;
+                
+                // CRITICAL FIX: Send setupAudio command immediately so worker can start processing
+                // This ensures isProcessing=true in worker even if prepareToPlay() hasn't been called yet
+                if (currentSampleRate > 0 && blockSize > 0)
+                {
+                    juce::String payload = juce::String (currentSampleRate) + "," + juce::String (blockSize);
+                    bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setupAudio, payload });
+                    DEBUG_LOG ("MainComponent: Sent setupAudio command to worker (sampleRate=" 
+                              + juce::String (currentSampleRate) + ", blockSize=" + juce::String (blockSize) + ")");
+                }
+                else
+                {
+                    // Fallback: use default values if audio device hasn't started yet
+                    DEBUG_LOG ("MainComponent: Audio device not started, sending default setupAudio (44100/512)");
+                    bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setupAudio, "44100,512" });
+                }
             }
             else if (payload.startsWith ("shared_memory_paths:"))
             {

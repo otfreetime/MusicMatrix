@@ -13,6 +13,7 @@ enum class IPCCommandType
     unknown = 0,
     loadPlugin,
     unloadPlugin,
+    setupAudio,
     setParameter,
     embedWindow,
     heartbeat,

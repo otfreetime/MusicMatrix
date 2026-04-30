@@ -38,19 +38,24 @@ private:
         void handleConnectionLost() override
         {
             // Coordinator died — exit the worker process cleanly.
-            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+            juce::JUCEApplication::getInstance()->systemRequestedQuit();        
         }
 
         PluginBridgeWorker& owner;
     };
 
     //==========================================================================
-    // Timer that drives audio processing via shared memory
-    struct AudioProcessingTimer : public juce::Timer
+    // Thread that drives audio processing via shared memory
+    class AudioWorkerThread : public juce::Thread
     {
-        explicit AudioProcessingTimer (PluginBridgeWorker& o) : owner (o) {}
-        void timerCallback() override { owner.tickAudio(); }
-        PluginBridgeWorker& owner;
+    public:
+        explicit AudioWorkerThread (PluginBridgeWorker& owner)
+            : juce::Thread("BridgeAudioThread"), ownerWorker(owner) {}
+
+        void run() override;
+
+    private:
+        PluginBridgeWorker& ownerWorker;
     };
 
     // Timer that polls for the plugin editor HWND becoming available
@@ -120,7 +125,7 @@ private:
     std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     std::unique_ptr<HWNDRetryTimer>         hwndRetryTimer;
-    std::unique_ptr<AudioProcessingTimer>   audioProcessingTimer;
+    std::unique_ptr<AudioWorkerThread>      audioWorkerThread;
     juce::StringArray nativeEditorCrashPluginPaths;
     bool detached { false };
     std::unique_ptr<juce::DocumentWindow> detachedWindow;

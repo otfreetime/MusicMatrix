@@ -70,6 +70,12 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     {
         plugin->prepareToPlay (sampleRate, samplesPerBlockExpected);
     }
+    
+    if (bridgeManager.isAvailable())
+    {
+        juce::String payload = juce::String(sampleRate) + "," + juce::String(samplesPerBlockExpected);
+        bridgeManager.sendCommand({ myapp::bridge::IPCCommandType::setupAudio, payload });
+    }
 }
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
