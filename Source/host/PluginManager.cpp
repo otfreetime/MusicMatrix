@@ -95,6 +95,7 @@ void PluginManager::startNextFormatScan()
 
         juce::MessageManager::callAsync ([this]
         {
+            if (destroyed) return;
             // In JUCE 8, we need to track failures differently
             // For now, just mark scan as complete
             ++scanFormatIndex;
@@ -156,6 +157,7 @@ void PluginManager::loadPluginAsync (int pluginIndex,
 void PluginManager::unloadPlugin()
 {
     currentPlugin.reset();
+    destroyed = true;
 }
 
 juce::String PluginManager::getLoadedPluginName() const

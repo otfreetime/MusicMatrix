@@ -14,17 +14,18 @@ void MainComponent::scanForPluginsAsync()
 
     uiController.setStatusMessage ("Starting plugin scan...");
 
-    pluginManager.scanForPluginsAsync ([this]
+    pluginManager.scanForPluginsAsync ([safeThis = juce::Component::SafePointer<MainComponent>(this)]
     {
-        uiController.setStatusMessage ("Scan complete. Found " + 
-                             juce::String (pluginManager.getNumDiscoveredPlugins()) + 
+        if (safeThis == nullptr) return;
+        safeThis->uiController.setStatusMessage ("Scan complete. Found " + 
+                             juce::String (safeThis->pluginManager.getNumDiscoveredPlugins()) + 
                              " plugins.");
         
-        updatePluginListUI();
+        safeThis->updatePluginListUI();
         
-        if (bridgeManager.isAvailable())
+        if (safeThis->bridgeManager.isAvailable())
         {
-            bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::unloadPlugin, {} });
+            safeThis->bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::unloadPlugin, {} });
         }
     });
 }

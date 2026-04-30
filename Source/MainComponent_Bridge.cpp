@@ -8,9 +8,13 @@ void MainComponent::initialiseBridge()
 {
     bridgeManager.setCommandCallback ([this] (const myapp::bridge::IPCCommand& command)
     {
-        juce::MessageManager::callAsync ([this, command]
+        // Use SafePointer so the callAsync is a no-op if MainComponent was destroyed
+        // before this message is dispatched (e.g. rapid exit during plugin load).
+        auto safeThis = juce::Component::SafePointer<MainComponent> (this);
+        juce::MessageManager::callAsync ([safeThis, command]
         {
-            handleBridgeCommand (command);
+            if (safeThis != nullptr)
+                safeThis->handleBridgeCommand (command);
         });
     });
 

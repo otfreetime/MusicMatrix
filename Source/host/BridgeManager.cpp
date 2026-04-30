@@ -23,6 +23,7 @@ void BridgeManager::initialise (std::function<void(bool)> onBridgeReady)
 
         juce::MessageManager::callAsync ([this, ok, executable, onBridgeReady]
         {
+            if (destroyed) return;
             bridgeAvailable = ok;
             activeBridgeWorkerExecutable = ok ? executable : juce::File();
 
@@ -34,10 +35,28 @@ void BridgeManager::initialise (std::function<void(bool)> onBridgeReady)
 
 void BridgeManager::shutdown()
 {
+    DEBUG_LOG ("BridgeManager: shutdown called");
+    destroyed = true;
+    DEBUG_LOG ("BridgeManager: destroyed set");
+    // Clear ALL callbacks BEFORE destroying the coordinator.
+    // The coordinator destructor fires handleConnectionLost() and any in-flight
+    // messages still call the command callback — both post callAsync lambdas
+    // capturing 'this'. Nulling here prevents those from being queued against
+    // an already-destroyed BridgeManager / MainComponent.
+    onWorkerDisconnected = nullptr;
+    DEBUG_LOG ("BridgeManager: onWorkerDisconnected cleared");
+    bridgeMaster.setConnectionCallback (nullptr);
+    DEBUG_LOG ("BridgeManager: connection callback cleared");
+    bridgeMaster.setCommandCallback (nullptr);
+    DEBUG_LOG ("BridgeManager: command callback cleared");
+
     closeAudioFiles();
+    DEBUG_LOG ("BridgeManager: audio files closed");
     bridgeMaster.shutdownWorker();
+    DEBUG_LOG ("BridgeManager: worker shut down");
     bridgeAvailable = false;
     activeBridgeWorkerExecutable = {};
+    DEBUG_LOG ("BridgeManager: shutdown finished");
 }
 
 bool BridgeManager::ensureWorkerForPlugin (const juce::String& pluginPath, juce::String& errorMessage)
@@ -127,6 +146,10 @@ void BridgeManager::setCommandCallback (std::function<void(const myapp::bridge::
             const auto gen = launchGeneration;
             juce::MessageManager::callAsync ([this, gen]
             {
+                if (destroyed) return;
+                // Safety: if callbacks were cleared (shutdown in progress), bail out.
+                if (! onWorkerDisconnected)
+                    return;
                 // Ignore if a newer worker was already launched (stale event).
                 if (gen != launchGeneration)
                 {
@@ -135,8 +158,7 @@ void BridgeManager::setCommandCallback (std::function<void(const myapp::bridge::
                 }
                 bridgeAvailable = false;
                 DEBUG_LOG ("BridgeManager: Firing onWorkerDisconnected callback");
-                if (onWorkerDisconnected)
-                    onWorkerDisconnected();
+                onWorkerDisconnected();
             });
         }
     });

@@ -70,6 +70,20 @@ This repository is a JUCE-based VST plugin host built with CMake and a host/brid
 
 Use the official JUCE documentation when modifying framework integration or host/bridge interactions. The source here follows JUCE best-practice patterns for plugin hosting, `KnownPluginList`, and `AudioProcessorPlayer`.
 
+## Global Development Guidelines
+- **Modularity & Separation of Concerns:** Keep classes focused. `MainComponent` should delegate to managers (e.g., `PluginManager`, `BridgeManager`, `UIController`) rather than implementing all logic itself. Avoid monolithic classes.
+- **Asynchronous Operations:** Never block the message thread. Use `juce::MessageManager::callAsync()` or `juce::Thread::launch()` for heavy operations. Always guard async callbacks with `juce::Component::SafePointer` or atomic flags (like `destroyed`) to prevent use-after-free when components are torn down.
+- **Audio Thread Safety:** Code running in `processBlock` or `getNextAudioBlock` must be wait-free and lock-free. Do not allocate memory, log to the terminal, or call heavy UI functions from the audio thread.
+- **Resource Management (RAII):** Use smart pointers (`std::unique_ptr`, `std::unique_ptr`) to manage ownership. Raw pointers should only be used as non-owning, observing pointers.
+- **Cross-Platform Compatibility:** Write path handling, threading, and UI logic using JUCE primitives rather than OS-specific APIs unless absolutely necessary (like the specific Windows `HWND` embedding).
+
+## Debugging, Fixing, and Development Updates
+To prevent trial-and-error loops from happening again, we need to fundamentally change our process from making educated guesses to relying on hard evidence. This applies to any development update, new feature, or fixing any issue (not just specific crashes):
+- **Require Stack Traces & Evidence:** Never guess the cause of an `abort()` or crash. If a crash occurs, execution must be attached to a debugger to capture the exact Call Stack and failing line. Validate behavior mathematically or logically instead of guessing.
+- **Verify Framework Fundamentals First:** Always reference core JUCE documentation based on the Recommended JUCE resources above (e.g., subclass requirements like calling `shutdownAudio()` in `~AudioAppComponent()`) before assuming complex custom logic (like IPC or Bridge architecture) is at fault.
+- **Component Isolation:** When narrowing down an issue, isolate features by disabling subsystems (like deferring PluginManager or BridgeManager startup) to cleanly separate core lifecycles from feature issues.
+- **Strict Teardown Reviews:** Any new feature that allocates resources or registers listener callbacks must have its cleanup sequence explicitly reviewed in the relevant class destructor to prevent use-after-free and memory leaks.
+
 ## What to avoid
 - Do not assume all plugins are loaded in-process.
 - Do not remove the bridge worker fallback or IPC command contract without updating both host and worker.

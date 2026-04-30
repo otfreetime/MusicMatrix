@@ -164,16 +164,24 @@ void MainComponent::onPluginLoadComplete (juce::AudioPluginInstance* plugin, con
 
 void MainComponent::unloadPlugin()
 {
+    DEBUG_LOG ("MainComponent: unloadPlugin called");
     pluginManager.unloadPlugin();
+    DEBUG_LOG ("MainComponent: pluginManager unloaded");
     bridgeManager.unloadPlugin();
+    DEBUG_LOG ("MainComponent: bridgeManager unloaded");
 
     pluginEditorWindow.reset();
+    DEBUG_LOG ("MainComponent: pluginEditorWindow reset");
     processorPlayer.setProcessor (nullptr);
+    DEBUG_LOG ("MainComponent: processor set to null");
 
     pluginSubWindowContainer.clearEmbeddedWindow();
+    DEBUG_LOG ("MainComponent: embedded window cleared");
     pluginSubWindowContainer.setVisible (false);
+    DEBUG_LOG ("MainComponent: sub window hidden");
 
     uiController.setStatusMessage ("Plugin unloaded");
+    DEBUG_LOG ("MainComponent: unloadPlugin finished");
 }
 
 bool MainComponent::isPluginLoaded() const

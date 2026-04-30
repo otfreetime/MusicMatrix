@@ -57,11 +57,25 @@ MainComponent::~MainComponent()
 {
     DEBUG_LOG ("MainComponent: DESTRUCTOR CALLED");
     
+    // Remove the mouse listener to prevent lingering pointers referencing 'this' on teardown
+    if (uiController.getPluginListComponent() != nullptr)
+        uiController.getPluginListComponent()->getTableListBox().removeMouseListener (this);
+
     setLookAndFeel (nullptr);
+    DEBUG_LOG ("MainComponent: Look and feel set to null");
     
+    // Save plugin list before shutdown
+    savePluginCache();
+
     unloadPlugin();
-    bridgeManager.shutdown();
+    DEBUG_LOG ("MainComponent: Plugin unloaded");
     
+    bridgeManager.shutdown();
+    DEBUG_LOG ("MainComponent: Bridge shut down");
+    
+    // Shut down audio to stop callbacks and prevent abort() on exit
+    shutdownAudio();
+
     DEBUG_LOG ("MainComponent: Destructor finished");
 }
 

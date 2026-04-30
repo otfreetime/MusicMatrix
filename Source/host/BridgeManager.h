@@ -77,6 +77,8 @@ private:
     std::unique_ptr<juce::MemoryMappedFile> bridgeAudioInputMemory;
     std::unique_ptr<juce::MemoryMappedFile> bridgeAudioOutputMemory;
 
+    std::atomic<bool> destroyed {false};
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BridgeManager)
 };
 
