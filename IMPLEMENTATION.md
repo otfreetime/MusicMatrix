@@ -4,18 +4,21 @@ Modern, production-grade audio plugin hosting with JUCE 8.x, CMake, and best pra
 
 ## Overview
 
-This is a complete redesign of the MyApp audio application with **async plugin loading**, **XML caching**, **PluginListComponent UI**, and comprehensive unit tests. The architecture follows JUCE documentation patterns and aligns with industry templates (Pamplejuce, JUCE-Plugin-Starter).
+This is a complete redesign of the MyApp audio application with **async plugin loading**, **XML caching**, **PluginListComponent UI**, **virtual piano keyboard**, **instrument selector**, and comprehensive unit tests. The architecture follows JUCE documentation patterns and aligns with industry templates (Pamplejuce, JUCE-Plugin-Starter).
 
 ### Key Features
 
 ✅ **Async Plugin Loading** — Non-blocking audio thread via `createPluginInstanceAsync()`  
 ✅ **XML Plugin Cache** — Persistent `KnownPluginList` serialization with modification tracking  
 ✅ **Built-in UI** — Official `PluginListComponent` with sorting, blacklist, drag-and-drop  
+✅ **Virtual Piano Keyboard** — 25-key keyboard (C3-C5) with mouse interaction, MIDI output  
+✅ **Instrument Selector** — ComboBox for VST2 program/preset switching (32 instruments for EasternONE)  
+✅ **VST2 Bridge** — x86/x64 bridge worker for legacy VST2 plugin hosting via IPC  
 ✅ **Error Handling** — Graceful degradation for broken plugins via `CustomScanner` pattern  
 ✅ **Dry/Wet Mixing** — DSP-grade signal blending with double-precision support  
-✅ **Thread Safety** — `CriticalSection` protected audio routing  
+✅ **Thread Safety** — `CriticalSection` protected audio routing, lock-free ring buffers  
 ✅ **CMake Build** — Portable, FetchContent-based JUCE/Catch2 auto-download  
-✅ **Unit Tests** — 20+ Catch2 tests covering plugin discovery, loading, audio DSP  
+✅ **Unit Tests** — 20+ Catch2 tests covering plugin discovery, loading, audio DSP    
 
 ---
 

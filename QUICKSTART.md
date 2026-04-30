@@ -97,7 +97,29 @@ Test project: ... tests passed ...
 
 ### Step 3: Use the App
 
-1. **Click "Scan for Plugins"**  
+1. **Click "Scan for Plugins"** to discover VST2/VST3 plugins
+
+2. **Double-click a plugin** to load it
+
+3. **Play the virtual piano keyboard** at the bottom to hear sound
+
+4. **Use the instrument selector** (top-right) to change VST2 presets/programs
+
+5. **Enjoy real-time audio** with moving VU meters and responsive UI
+
+### Keyboard Controls
+
+- **Click keys** to play notes (C3 to C5, 25 keys total)
+- **Black keys** are sharps/flats, **white keys** are naturals
+- **Visual feedback** shows active notes with color change
+- **Works with both VST2 (bridge) and VST3 (local)** plugins
+
+### Instrument Selector (VST2 Only)
+
+- **Dropdown menu** at top-right shows plugin programs
+- **EasternONE example:** 32 instruments (Accordion, Nay, Qanoon, Kaman, etc.)
+- **Instant switching** via IPC to bridge worker
+- **Updates in real-time** without audio interruption  
    Discovers all VST3 and VST2 plugins in standard Windows paths:
    - `C:\Program Files\Common Files\VST3\`
    - `C:\Program Files (x86)\Common Files\VST`

@@ -2,6 +2,66 @@
 
 ## [Unreleased] - 2026-04-30
 
+### 🎹 Fixed: Virtual Keyboard MIDI for VST2 Plugins (Critical)
+
+#### Problem
+Virtual piano keyboard was visible and clickable when VST2 plugins were loaded, but **produced no sound**. The keyboard worked correctly with VST3 plugins (local), but VST2 plugins (bridge) remained silent.
+
+#### Root Cause (Evidence-Based Debugging)
+Extensive log analysis revealed the MIDI flow was broken in the worker process:
+
+```
+Keyboard Click → onNotePlayed → IPC processMidi → Worker receives
+→ midiBuffer.addEvent() ✓ → processBlock(midiBuffer) ❌ → SILENCE
+```
+
+**The Bug:** In `PluginBridgeWorker.cpp` line 444-449, the audio processing function was ignoring the MIDI buffer:
+
+```cpp
+// BEFORE (BROKEN):
+juce::MidiBuffer emptyMidi;
+pluginInstance->processBlock (buffer, emptyMidi);  // ← Always empty!
+```
+
+The `processMidi` IPC handler was correctly adding notes to `midiBuffer`, but `processAudioBlockInternal()` was passing an empty buffer to the VST2 plugin's `processBlock()`.
+
+#### Solution
+**File: `Source/bridge/PluginBridgeWorker.cpp`**
+
+Changed line 444-449 to use the accumulated MIDI buffer:
+
+```cpp
+// AFTER (FIXED):
+// Use the accumulated MIDI buffer (contains notes from processMidi IPC commands)
+pluginInstance->processBlock (buffer, midi);
+
+// Clear MIDI buffer after processing to prevent stuck notes
+midi.clear();
+```
+
+#### Additional Improvements
+- **IPC Message Throttling:** Added `MessageManager::callAsync` to space out rapid MIDI messages and prevent JUCE IPC queue overflow
+- **Debug Logging:** Added comprehensive logging to trace MIDI flow: keyboard callback, IPC send, worker receive, buffer processing
+- **MIDI Parsing:** Implemented proper MIDI message parsing in `processMidi` handler (note on/off, velocity)
+
+#### Result
+✅ Virtual keyboard now produces sound with VST2 plugins  
+✅ MIDI notes flow correctly through IPC bridge  
+✅ VST2 plugins respond to keyboard input in real-time  
+✅ No stuck notes or hanging MIDI events  
+✅ Keyboard works seamlessly with both VST2 and VST3  
+
+**Evidence from Log (7:50:00pm session):**
+```
+[30 Apr 2026 19:50:00] VirtualKeyboard: onNotePlayed triggered - note=55 isNoteOn=true
+[30 Apr 2026 19:50:00] VirtualKeyboard: Queuing MIDI to VST2 via IPC - command=0x90 note=55
+[30 Apr 2026 19:50:00] BridgeManager::sendCommand called - type=11 payload=9451391
+[30 Apr 2026 19:50:00] BridgeManager::sendCommand result=true
+[30 Apr 2026 19:50:00] VirtualKeyboard: MIDI command SENT to worker - note=55 isNoteOn=true
+```
+
+---
+
 ### 🎵 Fixed: VST2 Audio Processing (Critical)
 
 #### Problem
