@@ -63,41 +63,59 @@ void UIController::addComponentsTo (juce::Component& parent)
 
 void UIController::resized (juce::Component& parent, juce::Component* pluginSubWindowContainer)
 {
+    // Note: This method is now deprecated in favor of the new layout in MainComponent_UI.cpp::resized()
+    // It's kept for backward compatibility but should not be called in the new layout flow
     auto bounds = parent.getLocalBounds().reduced (8);
-
-    auto buttonRow = bounds.removeFromTop (36);
-    scanButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
-    loadButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
-    unloadButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
-
-    auto audioRow = bounds.removeFromTop (36);
-    openAudioFileButton.setBounds (audioRow.removeFromLeft (140).reduced (2, 0));
-    playButton.setBounds (audioRow.removeFromLeft (100).reduced (2, 0));
-    stopButton.setBounds (audioRow.removeFromLeft (100).reduced (2, 0));
-
-    auto statusRow = bounds.removeFromTop (28);
-    statusLabel.setBounds (statusRow.reduced (4, 4));
-
-    auto controlRow = bounds.removeFromTop (32);
-    maqamLabel.setBounds (controlRow.removeFromLeft (80));
-    maqamSelector.setBounds (controlRow.removeFromLeft (200).reduced (2, 0));
-    controlRow.removeFromLeft (12);
-    pluginFilterSelector.setBounds (controlRow.removeFromLeft (150).reduced (2, 0));
-    pluginSelector.setBounds (controlRow.removeFromLeft (300).reduced (2, 0));
-
-    auto visRow = bounds.removeFromTop (80);
-    waveformVisualiser.setBounds (visRow.reduced (4, 4));
 
     if (pluginSubWindowContainer != nullptr)
     {
-        auto contentArea = bounds;
-        pluginListComponent->setBounds (contentArea);
-        pluginSubWindowContainer->setBounds (contentArea);
+        pluginListComponent->setBounds (bounds);
+        pluginSubWindowContainer->setBounds (bounds);
     }
     else
     {
         pluginListComponent->setBounds (bounds);
     }
+}
+
+void UIController::positionToolbarBelowPluginList (int yPosition, int parentWidth)
+{
+    const int margin = 20;
+    const int buttonHeight = 36;
+    const int spacing = 8;
+    
+    // Position scan/load/unload buttons row
+    auto buttonRow = juce::Rectangle<int> (margin, yPosition, 
+                                           parentWidth - (margin * 2), buttonHeight);
+    scanButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
+    loadButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
+    unloadButton.setBounds (buttonRow.removeFromLeft (140).reduced (2, 0));
+    
+    // Position audio file buttons row
+    auto audioRow = juce::Rectangle<int> (margin, yPosition + buttonHeight + spacing,
+                                          parentWidth - (margin * 2), buttonHeight);
+    openAudioFileButton.setBounds (audioRow.removeFromLeft (140).reduced (2, 0));
+    playButton.setBounds (audioRow.removeFromLeft (100).reduced (2, 0));
+    stopButton.setBounds (audioRow.removeFromLeft (100).reduced (2, 0));
+    
+    // Position status label
+    auto statusRow = juce::Rectangle<int> (margin, yPosition + (buttonHeight + spacing) * 2,
+                                           parentWidth - (margin * 2), 28);
+    statusLabel.setBounds (statusRow.reduced (4, 4));
+    
+    // Position control row (Maqam, filter, plugin selector)
+    auto controlRow = juce::Rectangle<int> (margin, yPosition + (buttonHeight + spacing) * 2 + 36,
+                                            parentWidth - (margin * 2), 32);
+    maqamLabel.setBounds (controlRow.removeFromLeft (80));
+    maqamSelector.setBounds (controlRow.removeFromLeft (200).reduced (2, 0));
+    controlRow.removeFromLeft (12);
+    pluginFilterSelector.setBounds (controlRow.removeFromLeft (150).reduced (2, 0));
+    pluginSelector.setBounds (controlRow.removeFromLeft (300).reduced (2, 0));
+    
+    // Position waveform visualizer
+    auto visRow = juce::Rectangle<int> (margin, yPosition + (buttonHeight + spacing) * 2 + 72,
+                                        parentWidth - (margin * 2), 80);
+    waveformVisualiser.setBounds (visRow.reduced (4, 4));
 }
 
 void UIController::updatePluginList (const juce::KnownPluginList& pluginList,

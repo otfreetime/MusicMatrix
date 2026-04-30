@@ -166,7 +166,18 @@ void BridgeManager::setCommandCallback (std::function<void(const myapp::bridge::
 
 bool BridgeManager::sendCommand (const myapp::bridge::IPCCommand& command)
 {
-    return bridgeMaster.send (command);
+    DEBUG_LOG ("BridgeManager::sendCommand called - type=" + juce::String (static_cast<int> (command.type)) 
+              + " payload=" + command.payload);
+    
+    if (! bridgeAvailable)
+    {
+        DEBUG_LOG ("BridgeManager::sendCommand FAILED - bridge not available");
+        return false;
+    }
+    
+    const bool result = bridgeMaster.send (command);
+    DEBUG_LOG ("BridgeManager::sendCommand result=" + juce::String (result ? "true" : "false"));
+    return result;
 }
 
 bool BridgeManager::openAudioFiles (const juce::String& inputPath, const juce::String& outputPath)

@@ -47,11 +47,16 @@ void MainComponent::initialiseBridge()
 
 void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& command)
 {
+    DEBUG_LOG ("MainComponent: handleBridgeCommand called - type=" + juce::String (static_cast<int> (command.type)) 
+              + " payload=" + command.payload);
+    
     switch (command.type)
     {
         case myapp::bridge::IPCCommandType::status:
         {
             const auto& payload = command.payload;
+            
+            DEBUG_LOG ("MainComponent: Received status payload: " + payload);
             
             // Log all status messages for debugging
             uiController.setStatusMessage ("Bridge status: " + payload);
@@ -152,11 +157,76 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
                     uiController.setStatusMessage ("Bridge: invalid editor HWND");
                 }
             }
+            else if (command.payload.startsWith ("programs:"))
+            {
+                const auto programs = command.payload.fromFirstOccurrenceOf (":", false, false);
+                const auto tokens = juce::StringArray::fromTokens (programs, "|", "");
+                programNames = tokens;
+                numPrograms = tokens.size();
+                
+                programSelector.clear();
+                for (int i = 0; i < numPrograms; ++i)
+                {
+                    programSelector.addItem (programNames[i], i + 1);
+                }
+                programSelector.setEnabled (true);
+                DEBUG_LOG ("MainComponent: Received " + juce::String (numPrograms) + " programs from VST2");
+            }
             break;
         }
 
         default:
             break;
+    }
+}
+
+void MainComponent::setCurrentProgram (int programIndex)
+{
+    currentProgramIndex = programIndex;
+    
+    if (auto* plugin = pluginManager.getLoadedPlugin())
+    {
+        plugin->setCurrentProgram (programIndex);
+        DEBUG_LOG ("setCurrentProgram: VST3 plugin program changed to " + juce::String (programIndex));
+    }
+    else if (bridgePluginLoaded && bridgeManager.isAvailable())
+    {
+        // Send program change to VST2 via bridge
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setProgram, juce::String (programIndex) });
+        DEBUG_LOG ("setCurrentProgram: VST2 bridge program changed to " + juce::String (programIndex));
+    }
+}
+
+void MainComponent::updateProgramSelector()
+{
+    programSelector.clear();
+    programNames.clear();
+    numPrograms = 0;
+    currentProgramIndex = 0;
+    
+    if (auto* plugin = pluginManager.getLoadedPlugin())
+    {
+        numPrograms = plugin->getNumPrograms();
+        for (int i = 0; i < numPrograms; ++i)
+        {
+            const juce::String programName = plugin->getProgramName (i);
+            programNames.add (programName);
+            programSelector.addItem (programName.isEmpty() ? ("Program " + juce::String (i + 1)) : programName, i + 1);
+        }
+        currentProgramIndex = plugin->getCurrentProgram();
+        programSelector.setSelectedId (currentProgramIndex + 1, juce::dontSendNotification);
+        programSelector.setEnabled (true);
+    }
+    else if (bridgePluginLoaded && bridgeManager.isAvailable())
+    {
+        // For VST2, programs will be populated from worker response
+        programSelector.addItem ("Loading instruments...", 1);
+        programSelector.setEnabled (false);
+    }
+    else
+    {
+        programSelector.addItem ("-- No Plugin Loaded --", 1);
+        programSelector.setEnabled (false);
     }
 }
 

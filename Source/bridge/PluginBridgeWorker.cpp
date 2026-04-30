@@ -230,6 +230,27 @@ bool PluginBridgeWorker::loadPlugin (const juce::String& pluginPath)
         sendStatus ("warning:shared_memory_failed");
     }
     
+    // Query plugin programs and send to host
+    if (pluginInstance != nullptr)
+    {
+        const int numProgs = pluginInstance->getNumPrograms();
+        DEBUG_LOG ("PluginBridgeWorker: Plugin has " + juce::String (numProgs) + " programs");
+        
+        juce::StringArray programList;
+        for (int i = 0; i < numProgs; ++i)
+        {
+            const juce::String progName = pluginInstance->getProgramName (i);
+            programList.add (progName.isEmpty() ? ("Program " + juce::String (i + 1)) : progName);
+        }
+        
+        if (programList.size() > 0)
+        {
+            const juce::String programsJoined = programList.joinIntoString ("|");
+            sendStatus ("programs:" + programsJoined);
+            DEBUG_LOG ("PluginBridgeWorker: Sent " + juce::String (programList.size()) + " programs to host");
+        }
+    }
+    
     sendStatus ("plugin_prepared");
     DBG ("PluginBridgeWorker: Plugin prepared, creating editor");
 
@@ -420,8 +441,12 @@ void PluginBridgeWorker::processAudioBlockInternal (juce::AudioBuffer<float>& bu
     // Clear input buffer (MIDI instrument — no audio input needed)
     buffer.clear();
 
-    juce::MidiBuffer emptyMidi;
-    pluginInstance->processBlock (buffer, emptyMidi);
+    // Use the accumulated MIDI buffer (contains notes from processMidi IPC commands)
+    // This is critical for keyboard sound - DO NOT use emptyMidi!
+    pluginInstance->processBlock (buffer, midi);
+
+    // Clear MIDI buffer after processing to prevent stuck notes
+    midi.clear();
 
     // Push processed audio into the ring buffer so the host can consume it
     // at its own callback rate without tearing.
@@ -453,6 +478,9 @@ juce::String PluginBridgeWorker::getLastError() const
 
 void PluginBridgeWorker::handleCommand (const IPCCommand& command)
 {
+    DBG ("PluginBridgeWorker::handleCommand ENTER - type=" + juce::String (static_cast<int> (command.type)) 
+        + " payload=" + command.payload);
+    
     if (command.type == IPCCommandType::loadPlugin)
     {
         DBG("PluginBridgeWorker: Handling loadPlugin");
@@ -514,6 +542,15 @@ void PluginBridgeWorker::handleCommand (const IPCCommand& command)
         unloadPlugin();
         sendStatus ("plugin_unloaded");
     }
+    else if (command.type == IPCCommandType::setProgram)
+    {
+        const int programIndex = command.payload.getIntValue();
+        if (pluginInstance != nullptr && programIndex >= 0)
+        {
+            pluginInstance->setCurrentProgram (programIndex);
+            DEBUG_LOG ("PluginBridgeWorker: Program changed to " + juce::String (programIndex));
+        }
+    }
     else if (command.type == IPCCommandType::setDetached)
     {
         detached = (command.payload == "true");
@@ -526,7 +563,25 @@ void PluginBridgeWorker::handleCommand (const IPCCommand& command)
     }
     else if (command.type == IPCCommandType::processMidi)
     {
-        // TODO: Implement MIDI processing
+        const int midiData = command.payload.getIntValue();
+        const int status = (midiData >> 16) & 0xFF;
+        const int noteNumber = (midiData >> 8) & 0xFF;
+        const int velocity = midiData & 0xFF;
+        
+        DBG("PluginBridgeWorker: Received MIDI - status=0x" + juce::String::toHexString (status) 
+            + " note=" + juce::String (noteNumber) + " vel=" + juce::String (velocity));
+        
+        // Create MIDI message and add to buffer
+        if (status == 0x90) // Note On
+        {
+            midiBuffer.addEvent (juce::MidiMessage::noteOn (1, noteNumber, static_cast<float> (velocity) / 127.0f), 0);
+            DBG("PluginBridgeWorker: Note On added to buffer");
+        }
+        else if (status == 0x80) // Note Off
+        {
+            midiBuffer.addEvent (juce::MidiMessage::noteOff (1, noteNumber), 0);
+            DBG("PluginBridgeWorker: Note Off added to buffer");
+        }
     }
     else
     {

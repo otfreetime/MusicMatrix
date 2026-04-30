@@ -23,6 +23,9 @@ public:
 
     void addComponentsTo (juce::Component& parent);
     void resized (juce::Component& parent, juce::Component* pluginSubWindowContainer);
+    
+    /** Position toolbar components below plugin list at the specified y-coordinate */
+    void positionToolbarBelowPluginList (int yPosition, int parentWidth);
 
     // UI Updates
     void updatePluginList (const juce::KnownPluginList& pluginList,

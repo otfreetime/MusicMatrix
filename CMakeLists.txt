@@ -89,6 +89,7 @@ target_sources(MyApp PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/MainComponent_Audio.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/MainComponent_Scanning.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/MainComponent_Events.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/MainComponent_Keyboard.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/host/PluginManager.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/host/PluginManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/host/BridgeManager.h"

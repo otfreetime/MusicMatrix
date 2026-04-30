@@ -14,6 +14,9 @@ public:
     void setEmbeddedWindowHandle (void* nativeWindowHandle);
     void clearEmbeddedWindow();
     juce::String getLastAttachStatus() const;
+    
+    /** Reposition the embedded window to match current container bounds */
+    void repositionEmbeddedWindow();
 
     /** Called on the message thread when the embedded window is detected as destroyed. */
     std::function<void()> onEmbeddedWindowDied;

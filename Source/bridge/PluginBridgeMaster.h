@@ -45,9 +45,18 @@ private:
         {
             const juce::String text (juce::String::fromUTF8 (
                 static_cast<const char*> (mb.getData()), static_cast<int> (mb.getSize())));
+            DBG ("PluginBridgeMaster: Received message from worker: " + text);
             const auto cmd = ipcDeserialize (text);
+            DBG ("PluginBridgeMaster: Deserialized command type=" + juce::String (static_cast<int> (cmd.type)));
             if (owner.onCommand)
+            {
+                DBG ("PluginBridgeMaster: Calling onCommand callback");
                 owner.onCommand (cmd);
+            }
+            else
+            {
+                DBG ("PluginBridgeMaster: WARNING - onCommand callback is null!");
+            }
         }
 
         void handleConnectionLost() override

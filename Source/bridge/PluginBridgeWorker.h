@@ -32,6 +32,7 @@ private:
         {
             const juce::String text (juce::String::fromUTF8 (
                 static_cast<const char*> (mb.getData()), static_cast<int> (mb.getSize())));
+            DBG ("WorkerIPC::handleMessageFromCoordinator received: " + text);
             owner.handleCommand (ipcDeserialize (text));
         }
 

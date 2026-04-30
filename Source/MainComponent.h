@@ -59,6 +59,12 @@ public:
     juce::PluginDescription getPluginDescription (int index) const;
 
     //==========================================================================
+    // MIDI Keyboard & Instrument Selection
+    //==========================================================================
+    void updateProgramSelector();
+    void setCurrentProgram (int programIndex);
+
+    //==========================================================================
     // Event Handlers
     //==========================================================================
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
@@ -107,6 +113,35 @@ private:
     juce::File deadMansPedalFile;
     juce::Array<int> pluginSelectorToKnownIndex;
     bool bridgeAvailable = false;
+
+    //==========================================================================
+    // Virtual MIDI Keyboard & Instrument Selector
+    //==========================================================================
+    class VirtualKeyboard : public juce::Component
+    {
+    public:
+        VirtualKeyboard();
+        void paint (juce::Graphics& g) override;
+        void mouseDown (const juce::MouseEvent& event) override;
+        void mouseUp (const juce::MouseEvent& event) override;
+        void mouseDrag (const juce::MouseEvent& event) override;
+        
+        std::function<void(int midiNoteNumber, bool isNoteOn)> onNotePlayed;
+        
+    private:
+        juce::Array<int> activeNotes;
+        int getNoteFromX (float x) const;
+        juce::Rectangle<float> getKeyBounds (int noteIndex) const;
+        bool isBlackKey (int noteNumber) const;
+        
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VirtualKeyboard)
+    };
+    
+    std::unique_ptr<VirtualKeyboard> virtualKeyboard;
+    juce::ComboBox programSelector;
+    int currentProgramIndex { 0 };
+    int numPrograms { 0 };
+    juce::StringArray programNames;
 
     //==========================================================================
     // Plugin Editor Window

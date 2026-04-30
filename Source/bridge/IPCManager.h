@@ -14,6 +14,7 @@ enum class IPCCommandType
     loadPlugin,
     unloadPlugin,
     setupAudio,
+    setProgram,
     setParameter,
     embedWindow,
     heartbeat,

@@ -63,12 +63,31 @@ void PluginBridgeMaster::setConnectionCallback (ConnectionCallback callback)
 
 bool PluginBridgeMaster::send (const IPCCommand& command)
 {
+    DBG ("PluginBridgeMaster::send called - type=" + juce::String (static_cast<int> (command.type)));
+    
     if (! workerConnected || ! coordinator)
+    {
+        DBG ("PluginBridgeMaster::send FAILED - workerConnected=" + juce::String (workerConnected ? "true" : "false") 
+            + " coordinator=" + juce::String (coordinator ? "valid" : "null"));
         return false;
+    }
 
     const auto text = ipcSerialize (command);
-    return coordinator->sendMessageToWorker (
-        juce::MemoryBlock (text.toRawUTF8(), static_cast<size_t> (text.getNumBytesAsUTF8())));
+    DBG ("PluginBridgeMaster::send serialized command: " + text);
+    
+    const auto memoryBlock = juce::MemoryBlock (text.toRawUTF8(), static_cast<size_t> (text.getNumBytesAsUTF8()));
+    DBG ("PluginBridgeMaster::send memory block size: " + juce::String (memoryBlock.getSize()));
+    
+    const bool result = coordinator->sendMessageToWorker (memoryBlock);
+    
+    DBG ("PluginBridgeMaster::send sendMessageToWorker result=" + juce::String (result ? "true" : "false"));
+    
+    if (! result)
+    {
+        DBG ("PluginBridgeMaster::send FAILED - sendMessageToWorker returned false");
+    }
+    
+    return result;
 }
 
 } // namespace myapp::bridge
