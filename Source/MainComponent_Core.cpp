@@ -1,5 +1,36 @@
 #include "MainComponent.h"
 
+namespace
+{
+int getSemitoneForComputerKey (juce::juce_wchar keyChar)
+{
+    switch (juce::CharacterFunctions::toLowerCase (keyChar))
+    {
+        case 'a': return 0;
+        case 'w': return 1;
+        case 's': return 2;
+        case 'e': return 3;
+        case 'd': return 4;
+        case 'f': return 5;
+        case 't': return 6;
+        case 'g': return 7;
+        case 'y': return 8;
+        case 'h': return 9;
+        case 'u': return 10;
+        case 'j': return 11;
+        case 'k': return 12;
+        default:  return -1;
+    }
+}
+
+bool isComputerKeyCurrentlyDown (juce::juce_wchar lowerKey)
+{
+    const auto upperKey = juce::CharacterFunctions::toUpperCase (lowerKey);
+    return juce::KeyPress::isKeyCurrentlyDown ((int) lowerKey)
+        || juce::KeyPress::isKeyCurrentlyDown ((int) upperKey);
+}
+}
+
 //==============================================================================
 // Arch detection
 //==============================================================================
@@ -84,6 +115,84 @@ MainComponent::~MainComponent()
     shutdownAudio();
 
     DEBUG_LOG ("MainComponent: Destructor finished");
+}
+
+//==============================================================================
+// Keyboard Input Handling
+//==============================================================================
+
+bool MainComponent::keyPressed (const juce::KeyPress& key)
+{
+    if (! computerKeyboardMappingEnabled)
+        return false;
+
+    const auto keyChar = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+    const auto semitone = getSemitoneForComputerKey (keyChar);
+    if (semitone < 0)
+        return false;
+
+    if (! hasKeyboardFocus (true))
+        grabKeyboardFocus();
+
+    DEBUG_LOG ("Keyboard: keyPressed " + juce::String::charToString (keyChar));
+    return refreshComputerKeyboardNotesFromKeyState();
+}
+
+bool MainComponent::keyStateChanged (bool isKeyDown)
+{
+    if (! computerKeyboardMappingEnabled)
+        return false;
+
+    if (! hasKeyboardFocus (true))
+        grabKeyboardFocus();
+
+    DEBUG_LOG ("Keyboard: keyStateChanged - isKeyDown=" + juce::String (isKeyDown ? "true" : "false"));
+    return refreshComputerKeyboardNotesFromKeyState();
+}
+
+bool MainComponent::refreshComputerKeyboardNotesFromKeyState()
+{
+    bool handledAny = false;
+
+    static constexpr juce::juce_wchar mappedKeys[] = {
+        'a', 'w', 's', 'e', 'd', 'f', 't', 'g', 'y', 'h', 'u', 'j', 'k'
+    };
+
+    for (auto keyChar : mappedKeys)
+    {
+        const auto lowerKey = juce::CharacterFunctions::toLowerCase (keyChar);
+        const bool isDown = isComputerKeyCurrentlyDown (lowerKey);
+        const auto existing = heldComputerKeysToMidiNotes.find (lowerKey);
+
+        if (isDown && existing == heldComputerKeysToMidiNotes.end())
+        {
+            const auto semitone = getSemitoneForComputerKey (lowerKey);
+            if (semitone >= 0)
+            {
+                const int noteNumber = juce::jlimit (0, 127, (keyboardBaseOctave + 1) * 12 + semitone);
+                keyboardState.noteOn (1, noteNumber, 0.8f);
+                heldComputerKeysToMidiNotes[lowerKey] = noteNumber;
+                handledAny = true;
+            }
+        }
+        else if (! isDown && existing != heldComputerKeysToMidiNotes.end())
+        {
+            keyboardState.noteOff (1, existing->second, 0.0f);
+            heldComputerKeysToMidiNotes.erase (existing);
+            handledAny = true;
+        }
+    }
+
+    DEBUG_LOG (handledAny ? "Keyboard: key state reconciliation handled" : "Keyboard: key state reconciliation no-op");
+    return handledAny;
+}
+
+void MainComponent::releaseAllHeldComputerKeyboardNotes()
+{
+    for (const auto& [keyChar, noteNumber] : heldComputerKeysToMidiNotes)
+        keyboardState.noteOff (1, noteNumber, 0.0f);
+
+    heldComputerKeysToMidiNotes.clear();
 }
 
 //==============================================================================

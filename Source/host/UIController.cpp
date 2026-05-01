@@ -20,6 +20,10 @@ UIController::UIController()
     playBayatiDemoButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xFF7A5C2A));
     playBayatiDemoButton.setTooltip (juce::CharPointer_UTF8 ("\xd8\xb9\xd8\xb2\xd9\x81 \xd9\x84\xd8\xad\xd9\x86 \xd8\xa8\xd9\x8a\xd8\xa7\xd8\xaa\xd9\x8a \xd8\xaa\xd8\xb9\xd9\x84\xd9\x8a\xd9\x85\xd9\x8a"));
 
+    bayatiPlayModeSelector.addItem ("Up Scale", 1);
+    bayatiPlayModeSelector.addItem ("Up & Down Scale", 2);
+    bayatiPlayModeSelector.setSelectedId (2, juce::dontSendNotification);
+
     maqamSelector.addItem ("Bayati",    1);
     maqamSelector.addItem ("Rast",      2);
     maqamSelector.addItem ("Hijaz",     3);
@@ -60,6 +64,7 @@ void UIController::addComponentsTo (juce::Component& parent)
     parent.addAndMakeVisible (openAudioFileButton);
     parent.addAndMakeVisible (playButton);
     parent.addAndMakeVisible (stopButton);
+    parent.addAndMakeVisible (bayatiPlayModeSelector);
     parent.addAndMakeVisible (playBayatiDemoButton);
     parent.addAndMakeVisible (statusLabel);
     parent.addAndMakeVisible (maqamLabel);

@@ -20,6 +20,42 @@ juce::String getBaseNoteLabel (int semitone)
 // MIDI Keyboard Implementation using JUCE MidiKeyboardComponent
 //==============================================================================
 
+void MainComponent::initialiseKeyboardMapping()
+{
+    if (midiKeyboard == nullptr)
+        return;
+    
+    // Clear any existing mappings
+    midiKeyboard->clearKeyMappings();
+
+    // JUCE computes: actualMidiNote = keyMappingOctave * 12 + midiNoteOffsetFromC.
+    // UI labels use C0 at MIDI 12, so UI octave Cn maps to JUCE base octave (n + 1).
+    midiKeyboard->setKeyPressBaseOctave (keyboardBaseOctave + 1);
+    
+    DEBUG_LOG ("Keyboard: setKeyPressBaseOctave called with value=" + juce::String (keyboardBaseOctave + 1) + " (expected MIDI C note=" + juce::String ((keyboardBaseOctave + 1) * 12) + ")");
+
+    // White keys - home row (semitone offsets from C, 0-12)
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('a'), 0);   // C
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('s'), 2);   // D
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('d'), 4);   // E
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('f'), 5);   // F
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('g'), 7);   // G
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('h'), 9);   // A
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('j'), 11);  // B
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('k'), 12);  // C (next octave)
+
+    // Black keys - top row (semitone offsets from C)
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('w'), 1);   // C#/Db
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('e'), 3);   // D#/Eb
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('t'), 6);   // F#/Gb
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('y'), 8);   // G#/Ab
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('u'), 10);  // A#/Bb
+    
+    DEBUG_LOG ("Keyboard: PC keyboard mapping initialized (base octave " + juce::String (keyboardBaseOctave) + ")");
+    DEBUG_LOG ("Keyboard: White keys: A=C, S=D, D=E, F=F, G=G, H=A, J=B, K=C");
+    DEBUG_LOG ("Keyboard: Black keys: W=C#, E=D#, T=F#, Y=G#, U=A#");
+}
+
 void MainComponent::handleMidiNoteOn (int midiNoteNumber, float velocity)
 {
     DEBUG_LOG ("MidiKeyboard: Note ON - note=" + juce::String (midiNoteNumber) 
@@ -240,6 +276,8 @@ void MainComponent::playDemoMelody()
     if (midiKeyboard == nullptr)
         return;
 
+    using BayatiPlayMode = MelodyPlayer::BayatiPlayMode;
+
     // Ensure Bayati is selected so highlights + pitch-bend are correct
     using myapp::music::MaqamPreset;
     if (maqamManager.getMaqam() != MaqamPreset::bayati)
@@ -283,7 +321,14 @@ void MainComponent::playDemoMelody()
         }
     );
 
-    melodyPlayer.playBayatiDemo();
+    BayatiPlayMode selectedMode = BayatiPlayMode::upAndDownScale;
+    if (auto* modeSelector = uiController.getBayatiPlayModeSelector())
+    {
+        const int modeId = modeSelector->getSelectedId();
+        selectedMode = (modeId == 1) ? BayatiPlayMode::upScale : BayatiPlayMode::upAndDownScale;
+    }
+
+    melodyPlayer.playBayatiDemo (selectedMode);
 
     // Toggle button label while playing
     if (auto* btn = uiController.getDemoMelodyButton())
@@ -299,5 +344,409 @@ void MainComponent::stopDemoMelody()
 
     if (auto* btn = uiController.getDemoMelodyButton())
         btn->setButtonText ("Play Bayati Demo");
+}
+
+//==============================================================================
+// Play "Tairi Ya Tayyara" Melody (G Bayati)
+//==============================================================================
+
+void MainComponent::playTairiYaTayyara()
+{
+    if (midiKeyboard == nullptr)
+        return;
+
+    // Switch to G Bayati (preset Bayati, will use G root via pitch transposition)
+    using myapp::music::MaqamPreset;
+    if (maqamManager.getMaqam() != MaqamPreset::bayati)
+    {
+        maqamManager.setMaqam (MaqamPreset::bayati);
+        uiController.getMaqamSelector()->setSelectedId (1, juce::sendNotification);
+    }
+
+    // Scroll keyboard to show the melody range (G2 to C4, MIDI 67 to 72)
+    midiKeyboard->setLowestVisibleKey (60); // C3 as reference
+    midiKeyboard->clearDemoNotes();
+
+    const auto melodyColour = juce::Colour (0xFFFFA500);  // Orange for Arabic melody
+
+    melodyPlayer.setCallbacks (
+        [this, melodyColour] (int note, float vel)
+        {
+            // Fire note visually on keyboard
+            if (midiKeyboard != nullptr)
+            {
+                midiKeyboard->setDemoNoteActive (note, true, melodyColour);
+            }
+
+            keyboardState.noteOn (1, note, vel);
+            handleMidiNoteOn (note, vel);
+        },
+        [this] (int note, float /*vel*/)
+        {
+            if (midiKeyboard != nullptr)
+                midiKeyboard->setDemoNoteActive (note, false);
+
+            keyboardState.noteOff (1, note, 0.f);
+            handleMidiNoteOff (note, 0.f);
+        },
+        [this]
+        {
+            stopTairiYaTayyara();
+        }
+    );
+
+    // Tairi Ya Tayyara in G Bayati (transposed from D Bayati root)
+    // G Bayati = D Bayati transposed up 5 semitones
+    // MIDI notes: G=67, C=60, Bb=70, A=69, F=65, D=62, Ed=64 (with -50 cent pitch bend)
+    // Based on the musical notation provided
+    std::vector<MelodyPlayer::Step> tairiSequence;
+
+    // Line 1: Main Theme Introduction
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 60, 300 }); // C (next octave)
+    tairiSequence.push_back ({ 60, 300 }); // C
+
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 60, 300 }); // C
+    tairiSequence.push_back ({ 60, 300 }); // C
+
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 65, 250 }); // F
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 70, 300 }); // Bb
+
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 400 }); // G (longer note)
+
+    // Lines 2 & 3: Development
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 64, 250 }); // Ed (microtonal E-half-flat, pitch bend -50c)
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 60, 300 }); // C
+
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 65, 300 }); // F
+
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 60, 300 }); // C
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 400 }); // G (conclusion)
+
+    // Lines 4 & 5: Musical Bridge
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 64, 250 }); // Ed
+    tairiSequence.push_back ({ 65, 300 }); // F
+
+    tairiSequence.push_back ({ 64, 250 }); // Ed
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 64, 300 }); // Ed
+
+    tairiSequence.push_back ({ 62, 250 }); // D
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 62, 300 }); // D
+
+    tairiSequence.push_back ({ 60, 250 }); // C
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 60, 300 }); // C
+
+    // Lines 6 & 7: Coda and Return
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 65, 250 }); // F
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 70, 300 }); // Bb
+
+    tairiSequence.push_back ({ 70, 250 }); // Bb
+    tairiSequence.push_back ({ 69, 250 }); // A
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 65, 250 }); // F
+    tairiSequence.push_back ({ 67, 250 }); // G
+    tairiSequence.push_back ({ 69, 500 }); // A (longer)
+
+    tairiSequence.push_back ({ 67, 300 }); // G (final note)
+    tairiSequence.push_back ({ 67, 300 }); // G
+    tairiSequence.push_back ({ 67, 800 }); // G (sustained final)
+
+    // Store the sequence and start playback
+    melodyPlayer.sequence = tairiSequence;
+    melodyPlayer.stepIndex = 0;
+    melodyPlayer.noteOnPhase = true;
+    melodyPlayer.startTimer (10);
+
+    DEBUG_LOG ("Keyboard: playTairiYaTayyara started - " + juce::String ((int) tairiSequence.size()) + " notes");
+
+    // Update button label
+    if (tairiYaTayyaraButton != nullptr)
+        tairiYaTayyaraButton->setButtonText ("Stop Tairi Ya Tayyara");
+}
+
+void MainComponent::stopTairiYaTayyara()
+{
+    melodyPlayer.stop();
+
+    if (midiKeyboard != nullptr)
+        midiKeyboard->clearDemoNotes();
+
+    if (tairiYaTayyaraButton != nullptr)
+        tairiYaTayyaraButton->setButtonText ("Play Tairi Ya Tayyara");
+
+    DEBUG_LOG ("Keyboard: playTairiYaTayyara stopped");
+}
+
+//==============================================================================
+// Play "Salalem El-Nashh" Melody (D Bayati)
+//==============================================================================
+
+void MainComponent::playSalalemElNashh()
+{
+    if (midiKeyboard == nullptr)
+        return;
+
+    // Switch to Bayati maqam (D root)
+    using myapp::music::MaqamPreset;
+    if (maqamManager.getMaqam() != MaqamPreset::bayati)
+    {
+        maqamManager.setMaqam (MaqamPreset::bayati);
+        uiController.getMaqamSelector()->setSelectedId (1, juce::sendNotification);
+    }
+
+    // Scroll keyboard to show the melody range (D3 to C5, MIDI 62 to 84)
+    midiKeyboard->setLowestVisibleKey (55); // G2 as reference
+    midiKeyboard->clearDemoNotes();
+
+    const auto melodyColour = juce::Colour (0xFFFF6B6B);  // Coral/red for Salalem
+
+    melodyPlayer.setCallbacks (
+        [this, melodyColour] (int note, float vel)
+        {
+            if (midiKeyboard != nullptr)
+                midiKeyboard->setDemoNoteActive (note, true, melodyColour);
+
+            keyboardState.noteOn (1, note, vel);
+            handleMidiNoteOn (note, vel);
+        },
+        [this] (int note, float /*vel*/)
+        {
+            if (midiKeyboard != nullptr)
+                midiKeyboard->setDemoNoteActive (note, false);
+
+            keyboardState.noteOff (1, note, 0.f);
+            handleMidiNoteOff (note, 0.f);
+        },
+        [this]
+        {
+            stopSalalemElNashh();
+        }
+    );
+
+    // Salalem El-Nashh full melody - 132 notes from the sheet music
+    // D Bayati with quarter-tone flats (Eb- and other microtonals)
+    std::vector<MelodyPlayer::Step> salalemSequence;
+
+    // Top section (8 lines)
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb- (microtonal)
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+
+    salalemSequence.push_back ({ 60, 250 }); // C
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 500 }); // F (longer)
+    salalemSequence.push_back ({ 67, 250 }); // G
+
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 69, 250 }); // A
+
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 69, 250 }); // A
+
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 500 }); // D (longer)
+
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+
+    salalemSequence.push_back ({ 72, 250 }); // C
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 500 }); // F (longer)
+    salalemSequence.push_back ({ 67, 250 }); // G
+
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 72, 250 }); // C
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 500 }); // F (longer)
+    salalemSequence.push_back ({ 67, 250 }); // G
+
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 800 }); // D (final, held longer)
+
+    // Bottom section (8 lines)
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 65, 250 }); // F
+
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 500 }); // Bb (longer)
+    salalemSequence.push_back ({ 72, 250 }); // C
+
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 500 }); // F (longer)
+
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 60, 500 }); // C (longer)
+    salalemSequence.push_back ({ 62, 250 }); // D
+
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 65, 250 }); // F
+
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 72, 250 }); // C
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 65, 250 }); // F
+
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 67, 250 }); // G
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 70, 250 }); // Bb
+    salalemSequence.push_back ({ 69, 250 }); // A
+    salalemSequence.push_back ({ 67, 500 }); // G (longer)
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+
+    salalemSequence.push_back ({ 62, 250 }); // D (opening)
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 250 }); // D
+    salalemSequence.push_back ({ 65, 250 }); // F
+    salalemSequence.push_back ({ 63, 250 }); // Eb-
+    salalemSequence.push_back ({ 62, 800 }); // D (final resolution, sustained)
+
+    // Store and play the sequence
+    melodyPlayer.sequence = salalemSequence;
+    melodyPlayer.stepIndex = 0;
+    melodyPlayer.noteOnPhase = true;
+    melodyPlayer.startTimer (10);
+
+    DEBUG_LOG ("Keyboard: playSalalemElNashh started - " + juce::String ((int) salalemSequence.size()) + " notes");
+
+    if (salalemElNashhButton != nullptr)
+        salalemElNashhButton->setButtonText ("Stop Salalem El-Nashh");
+}
+
+void MainComponent::stopSalalemElNashh()
+{
+    melodyPlayer.stop();
+
+    if (midiKeyboard != nullptr)
+        midiKeyboard->clearDemoNotes();
+
+    if (salalemElNashhButton != nullptr)
+        salalemElNashhButton->setButtonText ("Play Salalem El-Nashh");
+
+    DEBUG_LOG ("Keyboard: playSalalemElNashh stopped");
 }
 

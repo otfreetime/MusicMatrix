@@ -286,9 +286,6 @@ void MainComponent::setCurrentProgram (int programIndex)
     }
     else if (bridgePluginLoaded && bridgeManager.isAvailable())
     {
-        // Ensure previous instrument voices/tails are stopped in worker before program switch
-        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::panic, {} });
-
         // Send program change to VST2 via bridge
         bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setProgram, juce::String (currentProgramIndex) });
         DEBUG_LOG ("setCurrentProgram: VST2 bridge program changed to " + juce::String (programIndex));

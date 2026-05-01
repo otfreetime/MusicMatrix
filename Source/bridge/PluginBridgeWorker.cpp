@@ -388,20 +388,10 @@ void PluginBridgeWorker::AudioWorkerThread::run()
     {
         if (ownerWorker.isProcessing && ownerWorker.pluginInstance != nullptr)
         {
-            // Try to tick audio. If it didn't process anything (buffer full/empty), yield briefly.
-            int processed = 0;
-            if (ownerWorker.audioOutputMemory)
-            {
-                const int freeSpace = audioRingBufferGetFreeSpace(ownerWorker.audioOutputMemory->getData());
-                if (freeSpace >= ownerWorker.blockSize)
-                {
-                    ownerWorker.tickAudio();
-                    processed = 1;
-                }
-            }
-            
-            if (processed == 0)
-                wait (1); // 1ms sleep prevents busy-spinning when buffer is full
+            // Always tick so realtime control commands (panic/program change)
+            // are applied even when audio output ring buffer is currently full.
+            ownerWorker.tickAudio();
+            wait (1); // 1ms sleep prevents busy-spinning
         }
         else
         {
@@ -463,11 +453,30 @@ void PluginBridgeWorker::applyPendingRealtimeControlCommands()
     {
         midiBuffer.clear();
 
-        pluginInstance->setCurrentProgram (requestedProgram);
-        pluginInstance->reset();
-
+        // CRITICAL FIX: VST2 plugins like EasternONE expect program changes on the UI/message thread,
+        // not the audio thread. The plugin's UI (including instrument images) only updates properly
+        // when setCurrentProgram is called from the message thread.
+        juce::MessageManager::callAsync ([this, requestedProgram]
+        {
+            if (pluginInstance != nullptr)
+            {
+                // Stop audio processing temporarily
+                isProcessing = false;
+                
+                pluginInstance->setCurrentProgram (requestedProgram);
+                pluginInstance->reset();
+                
+                // Brief pause to let UI update
+                juce::Thread::sleep (50);
+                
+                // Resume processing
+                isProcessing = true;
+                
+                DEBUG_LOG ("PluginBridgeWorker: Program changed to " + juce::String (requestedProgram) + " on message thread");
+            }
+        });
+        
         sendStatus ("program_changed:" + juce::String (requestedProgram));
-        DEBUG_LOG ("PluginBridgeWorker: Program changed to " + juce::String (requestedProgram));
     }
 }
 

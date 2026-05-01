@@ -106,6 +106,12 @@ target_sources(MyApp PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/PluginSubWindowContainer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/CustomLookAndFeel.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/CustomLookAndFeel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/ChannelRackComponent.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/ChannelRackComponent.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/PianoRollComponent.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/PianoRollComponent.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/SequencerPanel.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/SequencerPanel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/music/OrientalScaleManager.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/music/OrientalScaleManager.cpp"
 )

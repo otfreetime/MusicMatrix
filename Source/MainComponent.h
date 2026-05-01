@@ -2,12 +2,14 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include <unordered_map>
 #include "host/PluginManager.h"
 #include "host/BridgeManager.h"
 #include "host/UIController.h"
 #include "music/OrientalScaleManager.h"
 #include "ui/CustomLookAndFeel.h"
 #include "ui/PluginSubWindowContainer.h"
+#include "ui/SequencerPanel.h"
 #include "debug/DebugLogger.h"
 
 //==============================================================================
@@ -47,6 +49,12 @@ public:
     //==========================================================================
     void paint (juce::Graphics& g) override;
     void resized() override;
+    
+    //==========================================================================
+    // Keyboard Focus & Input
+    //==========================================================================
+    bool keyPressed (const juce::KeyPress& key) override;
+    bool keyStateChanged (bool isKeyDown) override;
 
     //==========================================================================
     // Plugin Management (delegated to managers)
@@ -70,6 +78,10 @@ public:
     void refreshKeyboardHighlights();
     void playDemoMelody();
     void stopDemoMelody();
+    void playTairiYaTayyara();
+    void stopTairiYaTayyara();
+    void playSalalemElNashh();
+    void stopSalalemElNashh();
 
     //==========================================================================
     // Event Handlers
@@ -371,6 +383,12 @@ private:
     public:
         using NoteCallback = std::function<void (int midiNote, float velocity)>;
 
+        enum class BayatiPlayMode
+        {
+            upScale,
+            upAndDownScale
+        };
+
         MelodyPlayer() = default;
         ~MelodyPlayer() override { stopTimer(); }
 
@@ -381,40 +399,56 @@ private:
             finishedCb   = std::move (onFinished);
         }
 
-        /** Play the Bayati teaching melody (Bayati on D3, ascending + descending phrase). */
-        void playBayatiDemo()
+        /** Play Bayati demo melody according to selected mode. */
+        void playBayatiDemo (BayatiPlayMode mode)
         {
             stop();
             // Bayati on D3 (MIDI 62).
             // Eb3 (MIDI 63) is the character quarter-tone note;
             // OrientalScaleManager injects pitch-bend when routed through the bridge.
             // Format: { midiNote, durationMs }
-            sequence = {
-                { 62, 350 }, // D3  -- root (tonic of Bayati)
-                { 63, 350 }, // Eb3 -- maqam character note (quarter-tone)
-                { 65, 350 }, // F3
-                { 67, 350 }, // G3
-                { 69, 500 }, // A3  -- upper neighbour
-                { 67, 250 }, // G3
-                { 69, 250 }, // A3
-                { 70, 350 }, // Bb3
-                { 72, 350 }, // C4
-                { 74, 600 }, // D4  -- octave climax
-                { 72, 300 }, // C4  -- descent begins
-                { 70, 300 }, // Bb3
-                { 69, 300 }, // A3
-                { 67, 300 }, // G3
-                { 65, 300 }, // F3
-                { 63, 300 }, // Eb3
-                { 62, 800 }, // D3  -- first cadence
-                { 62, 250 }, // D3  -- second phrase opens
-                { 63, 250 }, // Eb3
-                { 65, 250 }, // F3
-                { 67, 500 }, // G3
-                { 65, 250 }, // F3
-                { 63, 250 }, // Eb3
-                { 62, 900 }, // D3  -- final resolution
-            };
+            if (mode == BayatiPlayMode::upScale)
+            {
+                sequence = {
+                    { 62, 420 }, // D3
+                    { 63, 360 }, // Eb3-
+                    { 65, 360 }, // F3
+                    { 67, 360 }, // G3
+                    { 69, 360 }, // A3
+                    { 70, 360 }, // Bb3
+                    { 72, 380 }, // C4
+                    { 74, 950 }, // D4 cadence
+                };
+            }
+            else
+            {
+                sequence = {
+                    { 62, 350 }, // D3  -- root (tonic of Bayati)
+                    { 63, 350 }, // Eb3 -- maqam character note (quarter-tone)
+                    { 65, 350 }, // F3
+                    { 67, 350 }, // G3
+                    { 69, 500 }, // A3  -- upper neighbour
+                    { 67, 250 }, // G3
+                    { 69, 250 }, // A3
+                    { 70, 350 }, // Bb3
+                    { 72, 350 }, // C4
+                    { 74, 600 }, // D4  -- octave climax
+                    { 72, 300 }, // C4  -- descent begins
+                    { 70, 300 }, // Bb3
+                    { 69, 300 }, // A3
+                    { 67, 300 }, // G3
+                    { 65, 300 }, // F3
+                    { 63, 300 }, // Eb3
+                    { 62, 800 }, // D3  -- first cadence
+                    { 62, 250 }, // D3  -- second phrase opens
+                    { 63, 250 }, // Eb3
+                    { 65, 250 }, // F3
+                    { 67, 500 }, // G3
+                    { 65, 250 }, // F3
+                    { 63, 250 }, // Eb3
+                    { 62, 900 }, // D3  -- final resolution
+                };
+            }
             stepIndex   = 0;
             noteOnPhase = true;
             startTimer (10);
@@ -431,8 +465,15 @@ private:
 
         bool isPlaying() const { return isTimerRunning(); }
 
-    private:
+        // Public access for custom melody playback sequences
         struct Step { int midiNote; int durationMs; };
+        std::vector<Step> sequence;
+        int stepIndex = 0;
+        bool noteOnPhase = true;
+        void startTimer (int intervalMs) { juce::Timer::startTimer (intervalMs); }
+        void stopTimer() { juce::Timer::stopTimer(); }
+
+    private:
 
         void timerCallback() override
         {
@@ -463,9 +504,6 @@ private:
 
         NoteCallback noteOnCb, noteOffCb;
         std::function<void()> finishedCb;
-        std::vector<Step> sequence;
-        int  stepIndex   = 0;
-        bool noteOnPhase = true;
         int  lastNote    = -1;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MelodyPlayer)
@@ -490,7 +528,20 @@ private:
     
     // Computer keyboard mapping support
     bool computerKeyboardMappingEnabled { true };
-    int keyboardBaseOctave { 3 };  // QWERTY row maps to this octave
+    int keyboardBaseOctave { 0 };  // QWERTY row maps to this octave (default C0)
+    std::unordered_map<juce::juce_wchar, int> heldComputerKeysToMidiNotes;
+    juce::ComboBox octaveSelector;   // C0–C9 octave selector for PC keyboard mapping
+    juce::Label  octaveSelectorLabel;
+    juce::OwnedArray<juce::TextButton> octaveButtons;  // C0-C9 octave selection buttons
+    std::unique_ptr<juce::TextButton> tairiYaTayyaraButton;  // Play Tairi Ya Tayyara button
+    std::unique_ptr<juce::TextButton> salalemElNashhButton;  // Play Salalem El-Nashh button
+    std::unique_ptr<juce::TextButton> sequencerToggleButton;  // Toggle sequencer UI
+    std::unique_ptr<SequencerPanel> sequencerPanel;   // Channel Rack + Piano Roll
+
+    // Initialize PC keyboard to musical note mapping
+    void initialiseKeyboardMapping();
+    bool refreshComputerKeyboardNotesFromKeyState();
+    void releaseAllHeldComputerKeyboardNotes();
 
     //==========================================================================
     // Plugin Editor Window

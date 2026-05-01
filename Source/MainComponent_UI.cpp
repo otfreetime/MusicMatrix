@@ -61,21 +61,8 @@ void MainComponent::initialiseUI()
     // Ensure the keyboard shows all keys including the last octave
     midiKeyboard->setKeyWidth (25.0f);  // Slightly wider keys for better visibility of last octave
     
-    // Enable computer keyboard mapping (QWERTY row to piano keys)
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('a'), 0);   // C
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('w'), 1);   // C#
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('s'), 2);   // D
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('e'), 3);   // D#
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('d'), 4);   // E
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('f'), 5);   // F
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('t'), 6);   // F#
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('g'), 7);   // G
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('y'), 8);   // G#
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('h'), 9);   // A
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('u'), 10);  // A#
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('j'), 11);  // B
-    midiKeyboard->setKeyPressForNote (juce::KeyPress ('k'), 12);  // C (next octave)
-    midiKeyboard->setKeyPressBaseOctave (keyboardBaseOctave);  // Maps to C3 by default
+    // Initialize PC keyboard mapping (will be done in initialiseKeyboardMapping)
+    // Keyboard mapping is initialized separately to allow dynamic octave changes
     
     // Styling to match reference image (professional piano look)
     midiKeyboard->setColour (juce::MidiKeyboardComponent::whiteNoteColourId, juce::Colours::white);
@@ -94,6 +81,121 @@ void MainComponent::initialiseUI()
     // Apply initial maqam highlight colours (Bayati is default)
     refreshKeyboardProgramNoteLabels();
     refreshKeyboardHighlights();
+    
+    // Initialize PC keyboard mapping
+    initialiseKeyboardMapping();
+
+    // ---- Octave selector (C0–C9) ----
+    octaveSelectorLabel.setText ("Octave:", juce::dontSendNotification);
+    octaveSelectorLabel.setJustificationType (juce::Justification::centredRight);
+    octaveSelectorLabel.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible (octaveSelectorLabel);
+
+    for (int oct = 0; oct <= 9; ++oct)
+        octaveSelector.addItem ("C" + juce::String (oct), oct + 1);  // ID = oct+1 (JUCE requires IDs >= 1)
+    octaveSelector.setSelectedId (keyboardBaseOctave + 1, juce::dontSendNotification);
+    octaveSelector.setJustificationType (juce::Justification::centred);
+    octaveSelector.setTooltip ("Select the base octave for PC keyboard note mapping");
+    octaveSelector.setWantsKeyboardFocus (false);  // Don't steal focus from midiKeyboard
+    octaveSelector.onChange = [this]
+    {
+        const int newOctave = octaveSelector.getSelectedId() - 1;
+        if (newOctave >= 0 && newOctave <= 9 && newOctave != keyboardBaseOctave)
+        {
+            DEBUG_LOG ("Keyboard: Octave dropdown changed to C" + juce::String (newOctave) + " (current=" + juce::String (keyboardBaseOctave) + ")");
+
+            releaseAllHeldComputerKeyboardNotes();
+            
+            // Update state FIRST
+            keyboardBaseOctave = newOctave;
+            
+            // Update button toggle states to match dropdown
+            for (int i = 0; i < octaveButtons.size(); ++i)
+                octaveButtons[i]->setToggleState (i == keyboardBaseOctave, juce::dontSendNotification);
+            
+            // Reinitialize keyboard mapping with new octave
+            initialiseKeyboardMapping();
+            
+            // Update piano view to show new octave
+            if (midiKeyboard != nullptr)
+            {
+                midiKeyboard->setLowestVisibleKey (juce::jmax (12, (keyboardBaseOctave + 1) * 12));
+                
+                // Defer focus restoration to ensure dropdown releases focus first
+                juce::MessageManager::callAsync ([safePtr = juce::Component::SafePointer<juce::MidiKeyboardComponent> (midiKeyboard.get())]()
+                {
+                    if (safePtr != nullptr)
+                    {
+                        safePtr->grabKeyboardFocus();
+                        DEBUG_LOG ("Keyboard: Focus restored to midiKeyboard after dropdown change");
+                    }
+                });
+            }
+            
+            DEBUG_LOG ("Keyboard: Octave set to C" + juce::String (newOctave) + " (MIDI note " + juce::String ((newOctave + 1) * 12) + ")");
+        }
+    };
+    addAndMakeVisible (octaveSelector);
+
+    // Create octave selection buttons (C0-C9) for easy click-to-select
+    for (int oct = 0; oct <= 9; ++oct)
+    {
+        octaveButtons.add (std::make_unique<juce::TextButton> ("C" + juce::String (oct)));
+        auto* btn = octaveButtons.getLast();
+        btn->setClickingTogglesState (true);  // Button stays toggled when clicked
+        btn->setRadioGroupId (1);  // Make buttons mutually exclusive (radio button group)
+        btn->setToggleState (oct == keyboardBaseOctave, juce::dontSendNotification);  // Set initial state
+        btn->onClick = [this, oct]()
+        {
+            if (oct != keyboardBaseOctave)
+            {
+                DEBUG_LOG ("Keyboard: Octave button C" + juce::String (oct) + " clicked (current=" + juce::String (keyboardBaseOctave) + ")");
+
+                releaseAllHeldComputerKeyboardNotes();
+                
+                // Update state FIRST
+                keyboardBaseOctave = oct;
+                
+                // Update dropdown to match (before reinitializing keyboard)
+                octaveSelector.setSelectedId (oct + 1, juce::dontSendNotification);
+                
+                // Reinitialize keyboard mapping with new octave
+                initialiseKeyboardMapping();
+                
+                // Update piano view to show new octave
+                if (midiKeyboard != nullptr)
+                {
+                    midiKeyboard->setLowestVisibleKey (juce::jmax (12, (keyboardBaseOctave + 1) * 12));
+                    
+                    // Defer focus restoration
+                    juce::MessageManager::callAsync ([safePtr = juce::Component::SafePointer<juce::MidiKeyboardComponent> (midiKeyboard.get())]()
+                    {
+                        if (safePtr != nullptr)
+                        {
+                            safePtr->grabKeyboardFocus();
+                            DEBUG_LOG ("Keyboard: Focus restored to midiKeyboard after button click");
+                        }
+                    });
+                }
+                
+                DEBUG_LOG ("Keyboard: Octave set to C" + juce::String (oct) + " (MIDI note " + juce::String ((oct + 1) * 12) + ")");
+            }
+        };
+        addAndMakeVisible (btn);
+    }
+
+    // Set keyboard focus so we receive key events
+    midiKeyboard->setWantsKeyboardFocus (true);
+    midiKeyboard->setFocusContainerType (juce::Component::FocusContainerType::keyboardFocusContainer);
+    
+    // Give focus to the main component and then immediately to the keyboard
+    setWantsKeyboardFocus (true);
+    setFocusContainerType (juce::Component::FocusContainerType::keyboardFocusContainer);
+    grabKeyboardFocus();
+    midiKeyboard->grabKeyboardFocus();  // Give focus to keyboard immediately
+    
+    DEBUG_LOG ("Keyboard: Focus configured - midiKeyboard has focus=" + 
+               juce::String (midiKeyboard->hasKeyboardFocus (true) ? "true" : "false"));
 
     // Create program selector
     programSelector.addItem ("-- Select Instrument --", 1);
@@ -146,6 +248,69 @@ void MainComponent::initialiseUI()
         else
             playDemoMelody();
     };
+
+    // Create and configure Tairi Ya Tayyara button
+    tairiYaTayyaraButton = std::make_unique<juce::TextButton> ("Play Tairi Ya Tayyara");
+    tairiYaTayyaraButton->setTooltip ("Play the complete 'Tairi Ya Tayyara' melody in G Bayati");
+    tairiYaTayyaraButton->onClick = [this]
+    {
+        if (melodyPlayer.isPlaying())
+            stopTairiYaTayyara();
+        else
+            playTairiYaTayyara();
+    };
+    addAndMakeVisible (tairiYaTayyaraButton.get());
+
+    // Create and configure Salalem El-Nashh button
+    salalemElNashhButton = std::make_unique<juce::TextButton> ("Play Salalem El-Nashh");
+    salalemElNashhButton->setTooltip ("Play the complete 'Salalem El-Nashh' melody in D Bayati");
+    salalemElNashhButton->onClick = [this]
+    {
+        if (melodyPlayer.isPlaying())
+            stopSalalemElNashh();
+        else
+            playSalalemElNashh();
+    };
+    addAndMakeVisible (salalemElNashhButton.get());
+
+    // Create Sequencer (Channel Rack + Piano Roll) - TEMPORARILY DISABLED
+    // sequencerPanel = std::make_unique<SequencerPanel>();
+    
+    // Create sequencer toggle button
+    sequencerToggleButton = std::make_unique<juce::TextButton> ("Sequencer");
+    sequencerToggleButton->setTooltip ("Sequencer disabled - under development");
+    sequencerToggleButton->setEnabled (false);  // DISABLED
+    /*
+    sequencerPanel = std::make_unique<SequencerPanel>();
+    sequencerToggleButton->setClickingTogglesState (true);
+    sequencerToggleButton->onClick = [this]
+    {
+        if (sequencerPanel != nullptr)
+            sequencerPanel->setVisible (sequencerToggleButton->getToggleState());
+    };
+    addAndMakeVisible (sequencerToggleButton.get());
+    addAndMakeVisible (sequencerPanel.get());
+    sequencerPanel->setVisible (false);
+    */
+    addAndMakeVisible (sequencerToggleButton.get());  // Add button only
+    
+    DEBUG_LOG ("Sequencer: DISABLED for debugging");
+
+    // Setup sequencer callbacks for MIDI playback integration
+    if (sequencerPanel != nullptr && sequencerPanel->getPianoRoll() != nullptr)
+    {
+        sequencerPanel->getPianoRoll()->onNoteAdded = [this] (const PianoRollComponent::Note& note)
+        {
+            juce::ignoreUnused (note);
+            DEBUG_LOG ("Sequencer: Note added to piano roll");
+        };
+
+        sequencerPanel->onSequenceChanged = [this]
+        {
+            DEBUG_LOG ("Sequencer: Sequence changed");
+            // Could update MelodyPlayer or sync to loaded plugin here
+        };
+    }
 
     // Plugin filter selector
     uiController.getPluginFilterSelector()->addItem ("All", 1);
@@ -274,14 +439,25 @@ void MainComponent::resized()
     
     currentY += buttonHeight + buttonSpacing;  // Move down, NO OVERLAP
     
-    // Row 2: Open Audio File, Play, Stop, Demo Melody
+    // Row 2: Open Audio File, Play, Stop, Bayati Mode, Demo Melody
     auto row2 = juce::Rectangle<int> (margin, currentY,
                                        getWidth() - (margin * 2), buttonHeight);
     uiController.getOpenAudioFileButton()->setBounds (row2.removeFromLeft (140).reduced (2, 0));
     uiController.getPlayButton()->setBounds (row2.removeFromLeft (100).reduced (2, 0));
     uiController.getStopButton()->setBounds (row2.removeFromLeft (100).reduced (2, 0));
     row2.removeFromLeft (16); // spacer
+    uiController.getBayatiPlayModeSelector()->setBounds (row2.removeFromLeft (170).reduced (2, 0));
+    row2.removeFromLeft (10); // spacer
     uiController.getDemoMelodyButton()->setBounds (row2.removeFromLeft (160).reduced (2, 0));
+    row2.removeFromLeft (10); // spacer
+    if (tairiYaTayyaraButton != nullptr)
+        tairiYaTayyaraButton->setBounds (row2.removeFromLeft (180).reduced (2, 0));
+    row2.removeFromLeft (10); // spacer
+    if (salalemElNashhButton != nullptr)
+        salalemElNashhButton->setBounds (row2.removeFromLeft (180).reduced (2, 0));
+    row2.removeFromLeft (10); // spacer
+    if (sequencerToggleButton != nullptr)
+        sequencerToggleButton->setBounds (row2.removeFromLeft (120).reduced (2, 0));
     
     currentY += buttonHeight + buttonSpacing;  // Move down, NO OVERLAP
     
@@ -314,11 +490,46 @@ void MainComponent::resized()
         pluginSubWindowContainer.repositionEmbeddedWindow();
     }
     
-    // ===== PANEL 5: Virtual Keyboard (Bottom) =====
-    // Keyboard gets full width with dynamic key width based on window size
-    const int keyboardTop = getHeight() - keyboardHeight - margin - keyboardBottomPadding;
-    const int keyboardWidth = getWidth() - (margin * 2);
+    // ===== SEQUENCER PANEL (optional overlay/replacement for container) =====
+    // DISABLED - sequencer panel not created
+    /*
+    if (sequencerPanel != nullptr)
+    {
+        sequencerPanel->setBounds (
+            margin,
+            containerTop,
+            getWidth() - (margin * 2),
+            containerHeight
+        );
+    }
+    */
     
+    // ===== PANEL 5: Virtual Keyboard (Bottom) =====
+    // Octave selector bar sits ABOVE the keyboard
+    const int octaveBarHeight  = 28;
+    const int octaveBarSpacing = 4;
+    const int labelWidth       = 55;
+    const int selectorW        = 80;
+
+    // keyboard starts after the octave bar
+    const int keyboardTop = getHeight() - keyboardHeight - margin - keyboardBottomPadding;
+    const int octaveControlY  = keyboardTop - octaveBarHeight - octaveBarSpacing;
+    const int keyboardWidth = getWidth() - (margin * 2);
+
+    octaveSelectorLabel.setBounds (margin, octaveControlY, labelWidth, octaveBarHeight);
+    octaveSelector.setBounds      (margin + labelWidth + 4, octaveControlY, selectorW, octaveBarHeight);
+
+    // Layout octave buttons (C0-C9) to the right of the dropdown
+    const int buttonWidth = 32;
+    const int octaveButtonSpacing = 4;
+    int buttonX = margin + labelWidth + selectorW + 8;
+    
+    for (int i = 0; i < octaveButtons.size(); ++i)
+    {
+        octaveButtons[i]->setBounds (buttonX, octaveControlY, buttonWidth, octaveBarHeight);
+        buttonX += buttonWidth + octaveButtonSpacing;
+    }
+
     midiKeyboard->setBounds (
         margin,
         keyboardTop,
