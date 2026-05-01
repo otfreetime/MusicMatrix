@@ -9,7 +9,36 @@
 
 namespace myapp::ui
 {
-PluginSubWindowContainer::PluginSubWindowContainer() = default;
+PluginSubWindowContainer::PluginSubWindowContainer()
+{
+    presetLabel.setText ("Preset", juce::dontSendNotification);
+    presetLabel.setJustificationType (juce::Justification::centredLeft);
+    presetLabel.setColour (juce::Label::textColourId, juce::Colours::white.withAlpha (0.85f));
+    addAndMakeVisible (presetLabel);
+
+    presetSelector.setEditableText (false);
+    presetSelector.setJustificationType (juce::Justification::centredLeft);
+    presetSelector.addItem ("-- No Plugin Loaded --", 1);
+    presetSelector.setEnabled (false);
+    presetSelector.onChange = [this]
+    {
+        if (suppressPresetChangeCallback)
+            return;
+
+        if (onProgramSelectionChanged != nullptr)
+            onProgramSelectionChanged (presetSelector.getSelectedId() - 1);
+    };
+    addAndMakeVisible (presetSelector);
+
+    resetButton.setTooltip ("Rest VST2 plugin to default values");
+    resetButton.setEnabled (false);
+    resetButton.onClick = [this]
+    {
+        if (onResetRequested != nullptr)
+            onResetRequested();
+    };
+    addAndMakeVisible (resetButton);
+}
 
 PluginSubWindowContainer::~PluginSubWindowContainer()
 {
@@ -128,18 +157,20 @@ void PluginSubWindowContainer::attachEmbeddedWindowIfPossible()
             DEBUG_LOG ("  New window style = " + juce::String::toHexString ((juce::int64) style));
         }
 
-        // Position the child window at (0,0) within the container's client area
-        auto containerBounds = getLocalBounds();
+        const auto editorArea = getEditorArea();
+        const int childX = getX() + editorArea.getX();
+        const int childY = getY() + editorArea.getY();
         
-        DEBUG_LOG ("  Setting VST2 window at client position 0,0 size: " 
-                  + juce::String (containerBounds.getWidth()) + "x" + juce::String (containerBounds.getHeight()));
+        DEBUG_LOG ("  Setting VST2 window at client position "
+              + juce::String (childX) + "," + juce::String (childY)
+              + " size: " + juce::String (editorArea.getWidth()) + "x" + juce::String (editorArea.getHeight()));
 
         const BOOL setResult = SetWindowPos (pluginHwnd,
                             HWND_TOP,
-                            0,     // X position within container client area
-                            0,     // Y position within container client area
-                            containerBounds.getWidth(),
-                            containerBounds.getHeight(),
+                    childX,
+                    childY,
+                    editorArea.getWidth(),
+                    editorArea.getHeight(),
                             SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_NOACTIVATE);
         const auto posError = GetLastError();
         
@@ -219,12 +250,95 @@ void PluginSubWindowContainer::clearEmbeddedWindow()
 
 void PluginSubWindowContainer::paint (juce::Graphics& g)
 {
-    // Hide container visual - VST2 window will cover this area
     g.fillAll (juce::Colour (0xFF000000));
+
+    constexpr int titleBarHeight = 32;
+    auto titleBar = getLocalBounds().removeFromTop (titleBarHeight);
+    g.setColour (juce::Colour (0xFF2A2F37));
+    g.fillRect (titleBar);
+
+    g.setColour (juce::Colour (0xFF3B4250));
+    g.drawLine ((float) titleBar.getX(), (float) titleBar.getBottom() - 0.5f,
+                (float) titleBar.getRight(), (float) titleBar.getBottom() - 0.5f, 1.0f);
 }
 
 void PluginSubWindowContainer::resized()
 {
+    constexpr int titleBarHeight = 32;
+    auto bounds = getLocalBounds();
+    auto titleBar = bounds.removeFromTop (titleBarHeight);
+
+    auto controls = titleBar.removeFromLeft (300).reduced (8, 4);
+    presetLabel.setBounds (controls.removeFromLeft (54));
+    controls.removeFromLeft (4);
+    presetSelector.setBounds (controls.removeFromLeft (120));
+    controls.removeFromLeft (8);
+    resetButton.setBounds (controls.removeFromLeft (74));
+
     attachEmbeddedWindowIfPossible();
+}
+
+juce::Rectangle<int> PluginSubWindowContainer::getEditorArea() const
+{
+    constexpr int titleBarHeight = 32;
+    return getLocalBounds().withTrimmedTop (titleBarHeight);
+}
+
+void PluginSubWindowContainer::setProgramList (const juce::StringArray& programs, int selectedIndex, bool enabled)
+{
+    suppressPresetChangeCallback = true;
+
+    presetSelector.clear();
+    for (int i = 0; i < programs.size(); ++i)
+        presetSelector.addItem (programs[i], i + 1);
+
+    if (programs.isEmpty())
+    {
+        presetSelector.addItem ("-- No Programs --", 1);
+        presetSelector.setSelectedId (1, juce::dontSendNotification);
+        presetSelector.setEnabled (false);
+    }
+    else
+    {
+        const int clampedIndex = juce::jlimit (0, programs.size() - 1, selectedIndex);
+        presetSelector.setSelectedId (clampedIndex + 1, juce::dontSendNotification);
+        presetSelector.setEnabled (enabled);
+    }
+
+    resetButton.setEnabled (enabled);
+
+    suppressPresetChangeCallback = false;
+}
+
+void PluginSubWindowContainer::clearProgramList (const juce::String& placeholderText)
+{
+    suppressPresetChangeCallback = true;
+    presetSelector.clear();
+    presetSelector.addItem (placeholderText.isNotEmpty() ? placeholderText : "-- No Plugin Loaded --", 1);
+    presetSelector.setSelectedId (1, juce::dontSendNotification);
+    presetSelector.setEnabled (false);
+    resetButton.setEnabled (false);
+    suppressPresetChangeCallback = false;
+}
+
+void PluginSubWindowContainer::setSelectedProgramIndex (int selectedIndex)
+{
+    if (presetSelector.getNumItems() <= 0)
+        return;
+
+    const int clampedIndex = juce::jlimit (0, presetSelector.getNumItems() - 1, selectedIndex);
+    suppressPresetChangeCallback = true;
+    presetSelector.setSelectedId (clampedIndex + 1, juce::dontSendNotification);
+    suppressPresetChangeCallback = false;
+}
+
+void PluginSubWindowContainer::setProgramSelectionCallback (ProgramSelectionCallback callback)
+{
+    onProgramSelectionChanged = std::move (callback);
+}
+
+void PluginSubWindowContainer::setResetCallback (ResetCallback callback)
+{
+    onResetRequested = std::move (callback);
 }
 } // namespace myapp::ui

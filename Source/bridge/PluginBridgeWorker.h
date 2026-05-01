@@ -32,7 +32,11 @@ private:
         {
             const juce::String text (juce::String::fromUTF8 (
                 static_cast<const char*> (mb.getData()), static_cast<int> (mb.getSize())));
-            DBG ("WorkerIPC::handleMessageFromCoordinator received: " + text);
+            
+            // CRITICAL DEBUG LOG - confirms if messages are received
+            DBG ("WorkerIPC::handleMessageFromCoordinator CALLED! Size=" + juce::String (mb.getSize()));
+            DBG ("WorkerIPC::Message content: " + text);
+            
             owner.handleCommand (ipcDeserialize (text));
         }
 
@@ -111,6 +115,7 @@ private:
 
     void processAudioBlockInternal (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     void tickAudio();
+    void applyPendingRealtimeControlCommands();
     bool setupSharedMemory();
     void cleanupSharedMemory();
     void processPluginAudio (float** inputChannels, float** outputChannels, int numSamples);
@@ -133,7 +138,9 @@ private:
 
     juce::AudioBuffer<float> audioBuffer;
     juce::MidiBuffer         midiBuffer;
-    int sampleRate { 44100 };
+    std::atomic<int>         pendingProgramIndex { -1 };
+    std::atomic<bool>        pendingPanic { false };
+    double sampleRate { 44100.0 };
     int blockSize  { 512 };
 
     std::unique_ptr<juce::MemoryMappedFile> audioInputMemory;

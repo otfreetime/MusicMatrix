@@ -4,6 +4,76 @@
 // Bridge Management Implementation
 //==============================================================================
 
+int MainComponent::getActualProgramIndexForDisplayIndex (int displayIndex) const
+{
+    if (displayIndex < 0)
+        return -1;
+
+    if (displayedProgramToActualIndex.isEmpty())
+        return (displayIndex < numPrograms) ? displayIndex : -1;
+
+    if (displayIndex >= displayedProgramToActualIndex.size())
+        return -1;
+
+    return displayedProgramToActualIndex[displayIndex];
+}
+
+int MainComponent::getDisplayProgramIndexForActualIndex (int actualIndex) const
+{
+    if (actualIndex < 0)
+        return -1;
+
+    if (displayedProgramToActualIndex.isEmpty())
+        return (actualIndex < numPrograms) ? actualIndex : -1;
+
+    return displayedProgramToActualIndex.indexOf (actualIndex);
+}
+
+void MainComponent::rebuildProgramSelectorsFromProgramNames()
+{
+    programSelector.clear();
+    displayedProgramToActualIndex.clear();
+
+    juce::StringArray displayedNames;
+    bool addedEmptyEntry = false;
+
+    for (int i = 0; i < numPrograms; ++i)
+    {
+        juce::String name = programNames[i].trim();
+        const bool isEmptyLike = name.isEmpty() || name.equalsIgnoreCase ("Empty");
+
+        if (isEmptyLike)
+        {
+            if (addedEmptyEntry)
+                continue;
+
+            addedEmptyEntry = true;
+            name = "Empty";
+        }
+
+        displayedProgramToActualIndex.add (i);
+        displayedNames.add (name);
+        programSelector.addItem (name, programSelector.getNumItems() + 1);
+    }
+
+    const bool hasItems = programSelector.getNumItems() > 0;
+    programSelector.setEnabled (hasItems);
+
+    int selectedDisplayIndex = getDisplayProgramIndexForActualIndex (currentProgramIndex);
+    if (selectedDisplayIndex < 0 && hasItems)
+    {
+        selectedDisplayIndex = 0;
+        currentProgramIndex = displayedProgramToActualIndex[0];
+    }
+
+    if (selectedDisplayIndex >= 0)
+        programSelector.setSelectedId (selectedDisplayIndex + 1, juce::dontSendNotification);
+
+    pluginSubWindowContainer.setProgramList (displayedNames,
+                                             juce::jmax (0, selectedDisplayIndex),
+                                             hasItems);
+}
+
 void MainComponent::initialiseBridge()
 {
     bridgeManager.setCommandCallback ([this] (const myapp::bridge::IPCCommand& command)
@@ -92,8 +162,8 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
                 // This ensures isProcessing=true in worker even if prepareToPlay() hasn't been called yet
                 if (currentSampleRate > 0 && blockSize > 0)
                 {
-                    juce::String payload = juce::String (currentSampleRate) + "," + juce::String (blockSize);
-                    bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setupAudio, payload });
+                    juce::String setupAudioPayload = juce::String (currentSampleRate) + "," + juce::String (blockSize);
+                    bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setupAudio, setupAudioPayload });
                     DEBUG_LOG ("MainComponent: Sent setupAudio command to worker (sampleRate=" 
                               + juce::String (currentSampleRate) + ", blockSize=" + juce::String (blockSize) + ")");
                 }
@@ -127,6 +197,32 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
                     DBG ("  output exists: " + juce::String (juce::File (outputPath).existsAsFile() ? "yes" : "no"));
                 }
             }
+            else if (payload.startsWith ("programs:"))
+            {
+                const auto programs = payload.fromFirstOccurrenceOf (":", false, false);
+                const auto tokens = juce::StringArray::fromTokens (programs, "|", "");
+
+                programNames = tokens;
+                numPrograms = tokens.size();
+                currentProgramIndex = 0;
+
+                rebuildProgramSelectorsFromProgramNames();
+                refreshKeyboardProgramNoteLabels();
+
+                DEBUG_LOG ("MainComponent: Received " + juce::String (numPrograms) + " programs from worker status");
+            }
+            else if (payload == "plugin_reset")
+            {
+                currentProgramIndex = 0;
+                const int selectedDisplayIndex = getDisplayProgramIndexForActualIndex (currentProgramIndex);
+                if (selectedDisplayIndex >= 0)
+                {
+                    programSelector.setSelectedId (selectedDisplayIndex + 1, juce::dontSendNotification);
+                    pluginSubWindowContainer.setSelectedProgramIndex (selectedDisplayIndex);
+                }
+
+                uiController.setStatusMessage ("VST2 Rest complete");
+            }
             else if (payload.startsWith ("warning:") || payload.startsWith ("error:"))
             {
                 uiController.setStatusMessage ("Bridge: " + payload);
@@ -157,21 +253,6 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
                     uiController.setStatusMessage ("Bridge: invalid editor HWND");
                 }
             }
-            else if (command.payload.startsWith ("programs:"))
-            {
-                const auto programs = command.payload.fromFirstOccurrenceOf (":", false, false);
-                const auto tokens = juce::StringArray::fromTokens (programs, "|", "");
-                programNames = tokens;
-                numPrograms = tokens.size();
-                
-                programSelector.clear();
-                for (int i = 0; i < numPrograms; ++i)
-                {
-                    programSelector.addItem (programNames[i], i + 1);
-                }
-                programSelector.setEnabled (true);
-                DEBUG_LOG ("MainComponent: Received " + juce::String (numPrograms) + " programs from VST2");
-            }
             break;
         }
 
@@ -182,25 +263,45 @@ void MainComponent::handleBridgeCommand (const myapp::bridge::IPCCommand& comman
 
 void MainComponent::setCurrentProgram (int programIndex)
 {
-    currentProgramIndex = programIndex;
+    // CRITICAL: Stop all playing notes before changing program to prevent تداخل الأصوات
+    // (sound interference/mixing) where old instrument's notes overlap with new instrument
+    allNotesOff();
+    
+    if (numPrograms > 0)
+        currentProgramIndex = juce::jlimit (0, numPrograms - 1, programIndex);
+    else
+        currentProgramIndex = programIndex;
+
+    const int selectedDisplayIndex = getDisplayProgramIndexForActualIndex (currentProgramIndex);
+    if (selectedDisplayIndex >= 0)
+    {
+        programSelector.setSelectedId (selectedDisplayIndex + 1, juce::dontSendNotification);
+        pluginSubWindowContainer.setSelectedProgramIndex (selectedDisplayIndex);
+    }
     
     if (auto* plugin = pluginManager.getLoadedPlugin())
     {
-        plugin->setCurrentProgram (programIndex);
+        plugin->setCurrentProgram (currentProgramIndex);
         DEBUG_LOG ("setCurrentProgram: VST3 plugin program changed to " + juce::String (programIndex));
     }
     else if (bridgePluginLoaded && bridgeManager.isAvailable())
     {
+        // Ensure previous instrument voices/tails are stopped in worker before program switch
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::panic, {} });
+
         // Send program change to VST2 via bridge
-        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setProgram, juce::String (programIndex) });
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::setProgram, juce::String (currentProgramIndex) });
         DEBUG_LOG ("setCurrentProgram: VST2 bridge program changed to " + juce::String (programIndex));
     }
+
+    refreshKeyboardProgramNoteLabels();
 }
 
 void MainComponent::updateProgramSelector()
 {
     programSelector.clear();
     programNames.clear();
+    displayedProgramToActualIndex.clear();
     numPrograms = 0;
     currentProgramIndex = 0;
     
@@ -211,22 +312,26 @@ void MainComponent::updateProgramSelector()
         {
             const juce::String programName = plugin->getProgramName (i);
             programNames.add (programName);
-            programSelector.addItem (programName.isEmpty() ? ("Program " + juce::String (i + 1)) : programName, i + 1);
         }
         currentProgramIndex = plugin->getCurrentProgram();
-        programSelector.setSelectedId (currentProgramIndex + 1, juce::dontSendNotification);
-        programSelector.setEnabled (true);
+        rebuildProgramSelectorsFromProgramNames();
+        refreshKeyboardProgramNoteLabels();
     }
     else if (bridgePluginLoaded && bridgeManager.isAvailable())
     {
         // For VST2, programs will be populated from worker response
         programSelector.addItem ("Loading instruments...", 1);
         programSelector.setEnabled (false);
+        refreshKeyboardProgramNoteLabels();
+        displayedProgramToActualIndex.clear();
+        pluginSubWindowContainer.clearProgramList ("Loading instruments...");
     }
     else
     {
         programSelector.addItem ("-- No Plugin Loaded --", 1);
         programSelector.setEnabled (false);
+        displayedProgramToActualIndex.clear();
+        pluginSubWindowContainer.clearProgramList ("-- No Plugin Loaded --");
     }
 }
 

@@ -180,6 +180,8 @@ void MainComponent::unloadPlugin()
     pluginSubWindowContainer.setVisible (false);
     DEBUG_LOG ("MainComponent: sub window hidden");
 
+    updateProgramSelector();
+
     uiController.setStatusMessage ("Plugin unloaded");
     DEBUG_LOG ("MainComponent: unloadPlugin finished");
 }

@@ -21,7 +21,9 @@ enum class IPCCommandType
     status,
     setDetached,
     processAudio,
-    processMidi
+    processMidi,
+    panic,
+    resetPluginState
 };
 
 struct IPCCommand

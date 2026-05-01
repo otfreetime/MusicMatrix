@@ -414,6 +414,8 @@ void PluginBridgeWorker::AudioWorkerThread::run()
 
 void PluginBridgeWorker::tickAudio()
 {
+    applyPendingRealtimeControlCommands();
+
     // Only call processBlock when there is room in the ring buffer.
     // This naturally throttles production to match the host consumption rate
     // and prevents crashing plugins that misbehave under continuous rapid calls.
@@ -425,6 +427,48 @@ void PluginBridgeWorker::tickAudio()
     }
 
     processAudioBlockInternal (audioBuffer, midiBuffer);
+}
+
+void PluginBridgeWorker::applyPendingRealtimeControlCommands()
+{
+    if (pluginInstance == nullptr)
+        return;
+
+    const bool shouldPanic = pendingPanic.exchange (false);
+    const int requestedProgram = pendingProgramIndex.exchange (-1);
+
+    if (! shouldPanic && requestedProgram < 0)
+        return;
+
+    if (shouldPanic)
+    {
+        midiBuffer.clear();
+
+        for (int channel = 1; channel <= 16; ++channel)
+        {
+            for (int note = 0; note < 128; ++note)
+                midiBuffer.addEvent (juce::MidiMessage::noteOff (channel, note), 0);
+
+            midiBuffer.addEvent (juce::MidiMessage::controllerEvent (channel, 123, 0), 0);
+            midiBuffer.addEvent (juce::MidiMessage::controllerEvent (channel, 120, 0), 0);
+            midiBuffer.addEvent (juce::MidiMessage::pitchWheel (channel, 8192), 0);
+        }
+
+        pluginInstance->reset();
+        sendStatus ("voices_cleared");
+        DEBUG_LOG ("PluginBridgeWorker: Panic - voices cleared");
+    }
+
+    if (requestedProgram >= 0)
+    {
+        midiBuffer.clear();
+
+        pluginInstance->setCurrentProgram (requestedProgram);
+        pluginInstance->reset();
+
+        sendStatus ("program_changed:" + juce::String (requestedProgram));
+        DEBUG_LOG ("PluginBridgeWorker: Program changed to " + juce::String (requestedProgram));
+    }
 }
 
 // Internal version that does the actual processing - called from SEH wrapper
@@ -547,8 +591,8 @@ void PluginBridgeWorker::handleCommand (const IPCCommand& command)
         const int programIndex = command.payload.getIntValue();
         if (pluginInstance != nullptr && programIndex >= 0)
         {
-            pluginInstance->setCurrentProgram (programIndex);
-            DEBUG_LOG ("PluginBridgeWorker: Program changed to " + juce::String (programIndex));
+            pendingPanic.store (true);
+            pendingProgramIndex.store (programIndex);
         }
     }
     else if (command.type == IPCCommandType::setDetached)
@@ -565,22 +609,63 @@ void PluginBridgeWorker::handleCommand (const IPCCommand& command)
     {
         const int midiData = command.payload.getIntValue();
         const int status = (midiData >> 16) & 0xFF;
-        const int noteNumber = (midiData >> 8) & 0xFF;
-        const int velocity = midiData & 0xFF;
+        const int data1 = (midiData >> 8) & 0xFF;
+        const int data2 = midiData & 0xFF;
+        const int statusType = status & 0xF0;
+        const int channel = (status & 0x0F) + 1;
         
         DBG("PluginBridgeWorker: Received MIDI - status=0x" + juce::String::toHexString (status) 
-            + " note=" + juce::String (noteNumber) + " vel=" + juce::String (velocity));
+            + " data1=" + juce::String (data1) + " data2=" + juce::String (data2));
         
-        // Create MIDI message and add to buffer
-        if (status == 0x90) // Note On
+        if (statusType == 0x90) // Note On
         {
-            midiBuffer.addEvent (juce::MidiMessage::noteOn (1, noteNumber, static_cast<float> (velocity) / 127.0f), 0);
+            if (data2 == 0)
+                midiBuffer.addEvent (juce::MidiMessage::noteOff (channel, data1), 0);
+            else
+                midiBuffer.addEvent (juce::MidiMessage::noteOn (channel, data1, static_cast<float> (data2) / 127.0f), 0);
+
             DBG("PluginBridgeWorker: Note On added to buffer");
         }
-        else if (status == 0x80) // Note Off
+        else if (statusType == 0x80) // Note Off
         {
-            midiBuffer.addEvent (juce::MidiMessage::noteOff (1, noteNumber), 0);
+            midiBuffer.addEvent (juce::MidiMessage::noteOff (channel, data1), 0);
             DBG("PluginBridgeWorker: Note Off added to buffer");
+        }
+        else if (statusType == 0xE0) // Pitch Bend
+        {
+            const int pitchValue = (data2 << 7) | data1;
+            midiBuffer.addEvent (juce::MidiMessage::pitchWheel (channel, pitchValue), 0);
+        }
+        else if (statusType == 0xB0) // Control Change
+        {
+            midiBuffer.addEvent (juce::MidiMessage::controllerEvent (channel, data1, data2), 0);
+        }
+    }
+    else if (command.type == IPCCommandType::panic)
+    {
+        if (pluginInstance != nullptr)
+        {
+            pendingPanic.store (true);
+        }
+    }
+    else if (command.type == IPCCommandType::resetPluginState)
+    {
+        if (pluginInstance != nullptr)
+        {
+            midiBuffer.clear();
+
+            for (auto* parameter : pluginInstance->getParameters())
+            {
+                if (parameter != nullptr)
+                    parameter->setValueNotifyingHost (parameter->getDefaultValue());
+            }
+
+            if (pluginInstance->getNumPrograms() > 0)
+                pluginInstance->setCurrentProgram (0);
+
+            pluginInstance->reset();
+            DEBUG_LOG ("PluginBridgeWorker: Plugin reset to default state");
+            sendStatus ("plugin_reset");
         }
     }
     else

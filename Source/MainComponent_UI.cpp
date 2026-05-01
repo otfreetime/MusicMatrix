@@ -41,63 +41,55 @@ void MainComponent::initialiseUI()
     uiController.getPlayButton()->onClick  = [this] { playAudioFile(); };
     uiController.getStopButton()->onClick  = [this] { stopAudioFile(); };
     
-    // Create virtual keyboard
-    virtualKeyboard = std::make_unique<VirtualKeyboard>();
-    virtualKeyboard->onNotePlayed = [this] (int midiNoteNumber, bool isNoteOn)
-    {
-        DEBUG_LOG ("VirtualKeyboard: onNotePlayed triggered - note=" + juce::String (midiNoteNumber) 
-                  + " isNoteOn=" + (isNoteOn ? "true" : "false"));
-        
-        if (auto* plugin = pluginManager.getLoadedPlugin())
-        {
-            // Send MIDI message to plugin
-            juce::MidiBuffer midiBuffer;
-            if (isNoteOn)
-            {
-                midiBuffer.addEvent (juce::MidiMessage::noteOn (1, midiNoteNumber, 0.8f), 0);
-                DEBUG_LOG ("VirtualKeyboard: Note ON " + juce::String (midiNoteNumber));
-            }
-            else
-            {
-                midiBuffer.addEvent (juce::MidiMessage::noteOff (1, midiNoteNumber), 0);
-                DEBUG_LOG ("VirtualKeyboard: Note OFF " + juce::String (midiNoteNumber));
-            }
-            
-            // Process the MIDI message through the plugin
-            juce::AudioBuffer<float> tempBuffer (2, 512);
-            tempBuffer.clear();
-            plugin->processBlock (tempBuffer, midiBuffer);
-        }
-        else if (bridgePluginLoaded && bridgeManager.isAvailable())
-        {
-            // Send MIDI to VST2 via bridge - use callAsync to prevent IPC flooding
-            const int command = isNoteOn ? 0x90 : 0x80; // Note On/Off
-            const int payload = (command << 16) | (midiNoteNumber << 8) | 127;
-            
-            DEBUG_LOG ("VirtualKeyboard: Queuing MIDI to VST2 via IPC - command=0x" 
-                      + juce::String::toHexString (command) + " note=" + juce::String (midiNoteNumber));
-            
-            // CRITICAL FIX: Use MessageManager::callAsync to space out IPC messages
-            // This prevents JUCE ChildProcessCoordinator from dropping rapid-fire messages
-            juce::MessageManager::callAsync ([this, command, payload, midiNoteNumber, isNoteOn]
-            {
-                if (bridgePluginLoaded && bridgeManager.isAvailable())
-                {
-                    const bool result = bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (payload) });
-                    DEBUG_LOG ("VirtualKeyboard: MIDI command " + juce::String (result ? "SENT" : "FAILED") 
-                              + " to worker - note=" + juce::String (midiNoteNumber) + " isNoteOn=" + (isNoteOn ? "true" : "false"));
-                }
-            });
-        }
-        else
-        {
-            DEBUG_LOG ("VirtualKeyboard: No plugin loaded - bridgePluginLoaded=" 
-                      + juce::String (bridgePluginLoaded ? "true" : "false") 
-                      + " bridgeManager.isAvailable=" 
-                      + juce::String (bridgeManager.isAvailable() ? "true" : "false"));
-        }
-    };
-    addAndMakeVisible (virtualKeyboard.get());
+    // Initialize MIDI keyboard listener
+    keyboardListener = std::make_unique<KeyboardStateListener> (*this);
+    keyboardState.addListener (keyboardListener.get());
+    
+    // Create custom MIDI keyboard component with octave markers
+    midiKeyboard = std::make_unique<CustomMidiKeyboardComponent> (
+        keyboardState,
+        juce::KeyboardComponentBase::Orientation::horizontalKeyboard
+    );
+    
+    // Configure for C0-C10 range (MIDI notes 12-132, but max is 127/G9)
+    // C0 = MIDI note 12, C10 = MIDI note 132 (but we cap at 127 = G9)
+    midiKeyboard->setAvailableRange (12, 127);  // C0 to G9 (full usable MIDI range)
+    midiKeyboard->setScrollButtonsVisible (true);  // Enable horizontal scrolling
+    midiKeyboard->setLowestVisibleKey (12);  // Start display at C0 (leftmost)
+    midiKeyboard->addChangeListener (this);
+    
+    // Ensure the keyboard shows all keys including the last octave
+    midiKeyboard->setKeyWidth (25.0f);  // Slightly wider keys for better visibility of last octave
+    
+    // Enable computer keyboard mapping (QWERTY row to piano keys)
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('a'), 0);   // C
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('w'), 1);   // C#
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('s'), 2);   // D
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('e'), 3);   // D#
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('d'), 4);   // E
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('f'), 5);   // F
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('t'), 6);   // F#
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('g'), 7);   // G
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('y'), 8);   // G#
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('h'), 9);   // A
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('u'), 10);  // A#
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('j'), 11);  // B
+    midiKeyboard->setKeyPressForNote (juce::KeyPress ('k'), 12);  // C (next octave)
+    midiKeyboard->setKeyPressBaseOctave (keyboardBaseOctave);  // Maps to C3 by default
+    
+    // Styling to match reference image (professional piano look)
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::whiteNoteColourId, juce::Colours::white);
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::blackNoteColourId, juce::Colours::black);
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, juce::Colours::lightgrey);
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, juce::Colours::lightgrey.withAlpha (0.3f));
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, juce::Colours::darkgrey);
+    midiKeyboard->setColour (juce::MidiKeyboardComponent::textLabelColourId, juce::Colours::white);
+    
+    // MIDI configuration
+    midiKeyboard->setMidiChannel (1);
+    midiKeyboard->setVelocity (0.8f, false);  // Fixed velocity for consistent playback
+    
+    addAndMakeVisible (midiKeyboard.get());
 
     // Create program selector
     programSelector.addItem ("-- Select Instrument --", 1);
@@ -105,11 +97,13 @@ void MainComponent::initialiseUI()
     programSelector.setJustificationType (juce::Justification::centredLeft);
     programSelector.onChange = [this]
     {
-        const int selectedIndex = programSelector.getSelectedId() - 1;
-        if (selectedIndex >= 0 && selectedIndex < numPrograms)
+        const int selectedDisplayIndex = programSelector.getSelectedId() - 1;
+        const int actualProgramIndex = getActualProgramIndexForDisplayIndex (selectedDisplayIndex);
+        if (actualProgramIndex >= 0)
         {
-            setCurrentProgram (selectedIndex);
-            DEBUG_LOG ("ProgramSelector: Changed to program " + juce::String (selectedIndex));
+            setCurrentProgram (actualProgramIndex);
+            DEBUG_LOG ("ProgramSelector: Changed to display " + juce::String (selectedDisplayIndex)
+                      + " actual " + juce::String (actualProgramIndex));
         }
     };
     addAndMakeVisible (programSelector);
@@ -138,6 +132,8 @@ void MainComponent::initialiseUI()
                 appProperties->setValue ("lastMaqam", idx);
                 appProperties->saveIfNeeded();
             }
+
+            refreshKeyboardProgramNoteLabels();
         }
     };
 
@@ -154,11 +150,35 @@ void MainComponent::initialiseUI()
 
     // Add all UI components
     uiController.addComponentsTo (*this);
+
+    pluginSubWindowContainer.setProgramSelectionCallback ([this] (int selectedIndex)
+    {
+        const int actualProgramIndex = getActualProgramIndexForDisplayIndex (selectedIndex);
+        if (actualProgramIndex >= 0)
+        {
+            setCurrentProgram (actualProgramIndex);
+            programSelector.setSelectedId (selectedIndex + 1, juce::dontSendNotification);
+        }
+    });
+    pluginSubWindowContainer.setResetCallback ([this]
+    {
+        if (! (bridgePluginLoaded && bridgeManager.isAvailable()))
+            return;
+
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::resetPluginState, {} });
+
+        if (numPrograms > 0)
+            setCurrentProgram (0);
+
+        uiController.setStatusMessage ("VST2 Rest: default values restored");
+    });
+    pluginSubWindowContainer.clearProgramList ("-- No Plugin Loaded --");
+
     addAndMakeVisible (pluginSubWindowContainer);
     pluginSubWindowContainer.setVisible (false);  // Hide container, VST2 will be positioned over it
     
-    // Add virtual keyboard and program selector
-    addAndMakeVisible (virtualKeyboard.get());
+    // Add MIDI keyboard and program selector
+    addAndMakeVisible (midiKeyboard.get());
     addAndMakeVisible (programSelector);
 
     // When the worker process crashes, the IPC disconnect is detected and fires this callback.
@@ -167,6 +187,7 @@ void MainComponent::initialiseUI()
     {
         DEBUG_LOG ("MainComponent: onWorkerDisconnected callback fired");
         pluginSubWindowContainer.clearEmbeddedWindow();
+        pluginSubWindowContainer.clearProgramList ("-- Worker Disconnected --");
         pluginSubWindowContainer.setVisible (false);
         bridgePluginLoaded = false;
         uiController.setStatusMessage ("VST2 plugin connection lost. Reload to retry.");
@@ -178,6 +199,7 @@ void MainComponent::initialiseUI()
     // Load cached plugin list + restore last maqam
     loadPluginCache();
     restoreMaqamPreset();
+    refreshKeyboardProgramNoteLabels();
 }
 
 void MainComponent::resized()
@@ -196,7 +218,8 @@ void MainComponent::resized()
     // Define layout constants
     const int margin = 15;
     const int spacing = 10;
-    const int keyboardHeight = 140;
+    const int keyboardHeight = 160;  // Increased for better playability
+    const int keyboardBottomPadding = 40;
     
     // Start from top and work down - NO OVERLAPS
     int currentY = margin;
@@ -231,7 +254,6 @@ void MainComponent::resized()
     // ===== PANEL 3: Control Buttons (3 rows) =====
     const int buttonHeight = 36;
     const int buttonSpacing = 8;
-    const int controlPanelHeight = (buttonHeight + buttonSpacing) * 3;
     
     // Row 1: Scan, Load, Unload
     auto row1 = juce::Rectangle<int> (margin, currentY, 
@@ -262,12 +284,12 @@ void MainComponent::resized()
     currentY += buttonHeight + spacing;  // Move down, NO OVERLAP
     
     // ===== PANEL 4: Plugin Container (VST2 Window Area) =====
-    // This fills all remaining space above keyboard
+    // Allocate 60% of remaining space to plugin container
     const int containerTop = currentY;
-    const int containerBottom = getHeight() - keyboardHeight - margin;
-    const int containerHeight = containerBottom - containerTop;
+    const int availableHeight = getHeight() - keyboardHeight - margin - keyboardBottomPadding - currentY;
+    const int containerHeight = static_cast<int> (availableHeight * 0.65f);  // 65% for plugin
     
-    if (containerHeight > 0)  // Ensure positive height
+    if (containerHeight > 100)  // Ensure reasonable minimum height
     {
         pluginSubWindowContainer.setBounds (
             margin,
@@ -281,14 +303,27 @@ void MainComponent::resized()
     }
     
     // ===== PANEL 5: Virtual Keyboard (Bottom) =====
-    const int keyboardTop = getHeight() - keyboardHeight - margin;
+    // Keyboard gets full width with dynamic key width based on window size
+    const int keyboardTop = getHeight() - keyboardHeight - margin - keyboardBottomPadding;
+    const int keyboardWidth = getWidth() - (margin * 2);
     
-    virtualKeyboard->setBounds (
+    midiKeyboard->setBounds (
         margin,
         keyboardTop,
-        getWidth() - (margin * 2),
+        keyboardWidth,
         keyboardHeight
     );
+    
+    // Calculate dynamic key width to show as many octaves as possible
+    // Each octave needs ~7 white keys, target is to show 4-6 octaves at once
+    const float targetVisibleOctaves = 5.0f;
+    const float whiteKeysPerOctave = 7.0f;
+    const float desiredKeyWidth = static_cast<float> (keyboardWidth) / (targetVisibleOctaves * whiteKeysPerOctave);
+    
+    // Clamp key width between 15px (narrow) and 35px (wide) for playability
+    const float clampedKeyWidth = juce::jlimit (15.0f, 35.0f, desiredKeyWidth);
+    midiKeyboard->setKeyWidth (clampedKeyWidth);
+    clampKeyboardViewportToRange();
 }
 void MainComponent::updatePluginListUI()
 {

@@ -1,147 +1,186 @@
 #include "MainComponent.h"
 
+namespace
+{
+juce::String getBaseNoteLabel (int semitone)
+{
+    static constexpr const char* noteNames[12] = {
+        "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"
+    };
+
+    if (semitone < 0 || semitone >= 12)
+        return {};
+
+    return noteNames[semitone];
+}
+
+}
+
 //==============================================================================
-// Virtual Keyboard Implementation
+// MIDI Keyboard Implementation using JUCE MidiKeyboardComponent
 //==============================================================================
 
-MainComponent::VirtualKeyboard::VirtualKeyboard()
+void MainComponent::handleMidiNoteOn (int midiNoteNumber, float velocity)
 {
-    setOpaque (true);
-    setWantsKeyboardFocus (true);
-}
-
-void MainComponent::VirtualKeyboard::paint (juce::Graphics& g)
-{
-    g.fillAll (juce::Colours::black);
+    DEBUG_LOG ("MidiKeyboard: Note ON - note=" + juce::String (midiNoteNumber) 
+              + " velocity=" + juce::String (velocity));
     
-    const int startNote = 48; // C3
-    const int numKeys = 25;   // 2 octaves
+    // Track this note as active
+    if (midiNoteNumber >= 0 && midiNoteNumber < 128)
+        activeNotes[midiNoteNumber] = true;
     
-    for (int i = 0; i < numKeys; ++i)
+    if (auto* plugin = pluginManager.getLoadedPlugin())
     {
-        const int noteNumber = startNote + i;
-        const bool isBlack = isBlackKey (noteNumber);
-        const auto bounds = getKeyBounds (i).toFloat();
+        // VST3 (local) - direct MIDI processing
+        juce::MidiBuffer midiBuffer;
+        midiBuffer.addEvent (juce::MidiMessage::noteOn (1, midiNoteNumber, velocity), 0);
         
-        if (isBlack)
+        juce::AudioBuffer<float> tempBuffer (2, 512);
+        tempBuffer.clear();
+        plugin->processBlock (tempBuffer, midiBuffer);
+    }
+    else if (bridgePluginLoaded && bridgeManager.isAvailable())
+    {
+        // VST2 (bridge) - IPC MIDI with maqam pitch bend for Arabic quarter tones
+        juce::MidiBuffer midiBuffer;
+        midiBuffer.addEvent (juce::MidiMessage::noteOn (1, midiNoteNumber, velocity), 0);
+        
+        // Apply maqam pitch bend for Arabic quarter tones (critical for black keys!)
+        maqamManager.processMidiBuffer (midiBuffer, 1);
+        
+        // Send all MIDI messages (note + pitch bend) to VST2 via bridge
+        // IMPORTANT: Maintain strict ordering - pitch bend BEFORE note on
+        for (const auto metadata : midiBuffer)
         {
-            g.setColour (activeNotes.contains (noteNumber) ? juce::Colours::grey : juce::Colours::darkgrey);
-            g.fillRect (bounds.reduced (1, 0));
+            const auto msg = metadata.getMessage();
+            const int status = msg.getRawData()[0] & 0xF0;
+            const int note = msg.getNoteNumber();
+            const int vel = msg.getVelocity();
+            
+            if (status == 0x90)  // Note On
+            {
+                const int midiMessage = (0x90 << 16) | ((note & 0x7F) << 8) | (vel & 0x7F);
+                DEBUG_LOG ("MidiKeyboard: Sending note ON to VST2 - note=" + juce::String (note));
+                bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (midiMessage) });
+            }
+            else if (status == 0x80)  // Note Off
+            {
+                const int midiMessage = (0x80 << 16) | ((note & 0x7F) << 8) | (vel & 0x7F);
+                DEBUG_LOG ("MidiKeyboard: Sending note OFF to VST2 - note=" + juce::String (note));
+                bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (midiMessage) });
+            }
+            else if (status == 0xE0)  // Pitch Bend
+            {
+                const int pitchValue = msg.getPitchWheelValue();
+                const int lsb = pitchValue & 0x7F;
+                const int msb = (pitchValue >> 7) & 0x7F;
+                const int pitchMessage = (0xE0 << 16) | (lsb << 8) | msb;
+                
+                DEBUG_LOG ("MidiKeyboard: Sending pitch bend to VST2 - value=" + juce::String (pitchValue));
+                bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (pitchMessage) });
+            }
         }
-        else
-        {
-            g.setColour (activeNotes.contains (noteNumber) ? juce::Colours::lightgrey : juce::Colours::white);
-            g.fillRect (bounds.reduced (1, 1));
-            g.setColour (juce::Colours::black);
-            g.drawRect (bounds.reduced (1, 1), 1);
-        }
-    }
-    
-    // Draw note labels
-    g.setColour (juce::Colours::white);
-    g.setFont (12.0f);
-    for (int i = 0; i < numKeys; ++i)
-    {
-        const int noteNumber = startNote + i;
-        if (! isBlackKey (noteNumber))
-        {
-            const auto bounds = getKeyBounds (i);
-            const juce::String noteName = juce::MidiMessage::getMidiNoteName (noteNumber, true, true, 3);
-            g.drawFittedText (noteName, bounds.toNearestInt(), juce::Justification::centredBottom, 1);
-        }
-    }
-}
-
-void MainComponent::VirtualKeyboard::mouseDown (const juce::MouseEvent& event)
-{
-    const int noteNumber = getNoteFromX (event.x);
-    if (noteNumber >= 0 && ! activeNotes.contains (noteNumber))
-    {
-        activeNotes.add (noteNumber);
-        repaint();
-        
-        if (onNotePlayed)
-            onNotePlayed (noteNumber, true);
-    }
-}
-
-void MainComponent::VirtualKeyboard::mouseUp (const juce::MouseEvent& event)
-{
-    const int noteNumber = getNoteFromX (event.x);
-    if (activeNotes.contains (noteNumber))
-    {
-        activeNotes.removeAllInstancesOf (noteNumber);
-        repaint();
-        
-        if (onNotePlayed)
-            onNotePlayed (noteNumber, false);
-    }
-}
-
-void MainComponent::VirtualKeyboard::mouseDrag (const juce::MouseEvent& event)
-{
-    // Trigger note on for new key under mouse
-    const int noteNumber = getNoteFromX (event.x);
-    if (noteNumber >= 0 && ! activeNotes.contains (noteNumber))
-    {
-        // Turn off previous notes
-        for (int i = activeNotes.size() - 1; i >= 0; --i)
-        {
-            if (onNotePlayed)
-                onNotePlayed (activeNotes[i], false);
-        }
-        activeNotes.clear();
-        
-        // Turn on new note
-        activeNotes.add (noteNumber);
-        repaint();
-        
-        if (onNotePlayed)
-            onNotePlayed (noteNumber, true);
-    }
-}
-
-int MainComponent::VirtualKeyboard::getNoteFromX (float x) const
-{
-    const int startNote = 48; // C3
-    const int numKeys = 25;   // 2 octaves
-    
-    for (int i = 0; i < numKeys; ++i)
-    {
-        const auto bounds = getKeyBounds (i);
-        if (bounds.contains (static_cast<int> (x), 0))
-            return startNote + i;
-    }
-    
-    return -1;
-}
-
-juce::Rectangle<float> MainComponent::VirtualKeyboard::getKeyBounds (int noteIndex) const
-{
-    const int startNote = 48; // C3
-    const int numKeys = 25;   // 2 octaves
-    const float keyWidth = static_cast<float> (getWidth()) / numKeys;
-    const float keyHeight = static_cast<float> (getHeight());
-    
-    const int noteNumber = startNote + noteIndex;
-    const bool isBlack = isBlackKey (noteNumber);
-    
-    if (isBlack)
-    {
-        // Black keys are narrower and shorter, positioned between white keys
-        const float blackKeyWidth = keyWidth * 0.6f;
-        const float blackKeyHeight = keyHeight * 0.6f;
-        const float x = (noteIndex * keyWidth) + (keyWidth * 0.7f);
-        return juce::Rectangle<float> (x, 0, blackKeyWidth, blackKeyHeight);
     }
     else
     {
-        return juce::Rectangle<float> (noteIndex * keyWidth, 0, keyWidth - 1, keyHeight);
+        DEBUG_LOG ("MidiKeyboard: No plugin loaded - bridgePluginLoaded=" 
+                  + juce::String (bridgePluginLoaded ? "true" : "false") 
+                  + " bridgeManager.isAvailable=" 
+                  + juce::String (bridgeManager.isAvailable() ? "true" : "false"));
     }
 }
 
-bool MainComponent::VirtualKeyboard::isBlackKey (int noteNumber) const
+void MainComponent::handleMidiNoteOff (int midiNoteNumber, float velocity)
 {
-    const int noteInOctave = noteNumber % 12;
-    return (noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 || noteInOctave == 8 || noteInOctave == 10);
+    DEBUG_LOG ("MidiKeyboard: Note OFF - note=" + juce::String (midiNoteNumber));
+    
+    // Mark this note as inactive
+    if (midiNoteNumber >= 0 && midiNoteNumber < 128)
+        activeNotes[midiNoteNumber] = false;
+    
+    if (auto* plugin = pluginManager.getLoadedPlugin())
+    {
+        // VST3 (local) - direct MIDI processing
+        juce::MidiBuffer midiBuffer;
+        midiBuffer.addEvent (juce::MidiMessage::noteOff (1, midiNoteNumber, velocity), 0);
+        
+        juce::AudioBuffer<float> tempBuffer (2, 512);
+        tempBuffer.clear();
+        plugin->processBlock (tempBuffer, midiBuffer);
+    }
+    else if (bridgePluginLoaded && bridgeManager.isAvailable())
+    {
+        // VST2 (bridge) - IPC MIDI
+        const int midiMessage = (0x80 << 16) | ((midiNoteNumber & 0x7F) << 8) | (static_cast<int>(velocity) & 0x7F);
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (midiMessage) });
+    }
+}
+
+void MainComponent::allNotesOff()
+{
+    DEBUG_LOG ("MidiKeyboard: Clearing all active notes before program change");
+    
+    // Send Note-OFF for all currently playing notes
+    for (int noteNum = 0; noteNum < 128; ++noteNum)
+    {
+        if (activeNotes[noteNum])
+        {
+            if (auto* plugin = pluginManager.getLoadedPlugin())
+            {
+                // VST3 (local)
+                juce::MidiBuffer midiBuffer;
+                midiBuffer.addEvent (juce::MidiMessage::noteOff (1, noteNum, 0.0f), 0);
+                
+                juce::AudioBuffer<float> tempBuffer (2, 512);
+                tempBuffer.clear();
+                plugin->processBlock (tempBuffer, midiBuffer);
+            }
+            else if (bridgePluginLoaded && bridgeManager.isAvailable())
+            {
+                // VST2 (bridge) - IPC MIDI
+                const int midiMessage = (0x80 << 16) | ((noteNum & 0x7F) << 8) | 0x00;
+                bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (midiMessage) });
+            }
+            
+            // Mark as inactive
+            activeNotes[noteNum] = false;
+        }
+    }
+
+    if (bridgePluginLoaded && bridgeManager.isAvailable())
+    {
+        // MIDI CC 123 (All Notes Off), CC 120 (All Sound Off), then center pitch bend
+        const int allNotesOffMessage = (0xB0 << 16) | (123 << 8) | 0;
+        const int allSoundOffMessage = (0xB0 << 16) | (120 << 8) | 0;
+        const int pitchCenterMessage = (0xE0 << 16) | (0x00 << 8) | 0x40; // 8192 center
+
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (allNotesOffMessage) });
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (allSoundOffMessage) });
+        bridgeManager.sendCommand ({ myapp::bridge::IPCCommandType::processMidi, juce::String (pitchCenterMessage) });
+    }
+}
+
+void MainComponent::refreshKeyboardProgramNoteLabels()
+{
+    if (midiKeyboard == nullptr)
+        return;
+
+    CustomMidiKeyboardComponent::NoteLabelArray labels;
+
+    const auto& intervalMap = myapp::music::OrientalScaleManager::getIntervalMap (maqamManager.getMaqam());
+    for (int semitone = 0; semitone < 12; ++semitone)
+    {
+        auto label = getBaseNoteLabel (semitone);
+        const float cents = intervalMap.centsOffset[(size_t) semitone];
+
+        if (std::abs (cents + 50.0f) < 0.1f)
+            label += "-";
+        else if (std::abs (cents - 50.0f) < 0.1f)
+            label += "+";
+
+        labels[(size_t) semitone] = label;
+    }
+
+    midiKeyboard->setNoteClassLabels (labels);
+
 }

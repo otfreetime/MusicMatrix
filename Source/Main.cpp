@@ -64,7 +64,7 @@ public:
             : DocumentWindow (name,
                               juce::Desktop::getInstance().getDefaultLookAndFeel()
                                                           .findColour (juce::ResizableWindow::backgroundColourId),
-                              DocumentWindow::allButtons)
+                              DocumentWindow::closeButton | DocumentWindow::maximiseButton)
         {
             DEBUG_LOG ("MainWindow: Constructor called, creating MainComponent");
             setUsingNativeTitleBar (true);
@@ -74,8 +74,10 @@ public:
             setFullScreen (true);
            #else
             setResizable (true, true);
-            setSize (1000, 700);
-            centreWithSize (1000, 700);
+            if (auto* primaryDisplay = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                setBounds (primaryDisplay->userArea);
+            else
+                setSize (1400, 900);
            #endif
 
             setVisible (true);

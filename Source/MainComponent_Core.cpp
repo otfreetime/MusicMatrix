@@ -61,6 +61,13 @@ MainComponent::~MainComponent()
     if (uiController.getPluginListComponent() != nullptr)
         uiController.getPluginListComponent()->getTableListBox().removeMouseListener (this);
 
+    // Clean up MIDI keyboard listener
+    if (keyboardListener != nullptr)
+        keyboardState.removeListener (keyboardListener.get());
+
+    if (midiKeyboard != nullptr)
+        midiKeyboard->removeChangeListener (this);
+
     setLookAndFeel (nullptr);
     DEBUG_LOG ("MainComponent: Look and feel set to null");
     
