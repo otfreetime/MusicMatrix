@@ -44,6 +44,7 @@ public:
     juce::TextButton* getOpenAudioFileButton() { return &openAudioFileButton; }
     juce::TextButton* getPlayButton()  { return &playButton; }
     juce::TextButton* getStopButton()  { return &stopButton; }
+    juce::TextButton* getDemoMelodyButton() { return &playBayatiDemoButton; }
     juce::Label* getStatusLabel() { return &statusLabel; }
     juce::ComboBox* getMaqamSelector() { return &maqamSelector; }
     juce::ComboBox* getPluginFilterSelector() { return &pluginFilterSelector; }
@@ -58,6 +59,7 @@ private:
     juce::TextButton openAudioFileButton { "Open Audio File" };
     juce::TextButton playButton        { "Play" };
     juce::TextButton stopButton        { "Stop" };
+    juce::TextButton playBayatiDemoButton { "Play Bayati Demo" };
     juce::Label      statusLabel;
     juce::Label      maqamLabel   { {}, "Maqam:" };
     juce::ComboBox   maqamSelector;

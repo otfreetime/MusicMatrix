@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include "host/PluginManager.h"
 #include "host/BridgeManager.h"
 #include "host/UIController.h"
@@ -66,6 +67,9 @@ public:
     void handleMidiNoteOn (int midiNoteNumber, float velocity);
     void handleMidiNoteOff (int midiNoteNumber, float velocity);
     void refreshKeyboardProgramNoteLabels();
+    void refreshKeyboardHighlights();
+    void playDemoMelody();
+    void stopDemoMelody();
 
     //==========================================================================
     // Event Handlers
@@ -151,6 +155,40 @@ private:
             noteClassLabels = labels;
             repaint();
         }
+
+        using NoteColourArray = std::array<juce::Colour, 12>;
+
+        void setNoteHighlightColours (const NoteColourArray& colours)
+        {
+            noteHighlightColours = colours;
+            repaint();
+        }
+
+        void setDemoNoteActive (int midiNoteNumber, bool isActive, juce::Colour accentColour = {})
+        {
+            if (midiNoteNumber < 0 || midiNoteNumber >= (int) demoActiveNotes.size())
+                return;
+
+            const auto noteIndex = (size_t) midiNoteNumber;
+            const auto resolvedAccent = accentColour.getAlpha() > 0
+                ? accentColour
+                : juce::Colour (0xFF9FD8B5);
+
+            if (demoActiveNotes[noteIndex] == isActive
+                && (! isActive || demoNoteAccentColours[noteIndex] == resolvedAccent))
+                return;
+
+            demoActiveNotes[noteIndex] = isActive;
+            demoNoteAccentColours[noteIndex] = isActive ? resolvedAccent : juce::Colours::transparentBlack;
+            repaint();
+        }
+
+        void clearDemoNotes()
+        {
+            demoActiveNotes.fill (false);
+            demoNoteAccentColours.fill (juce::Colours::transparentBlack);
+            repaint();
+        }
         
         void drawWhiteNote (int midiNoteNumber, juce::Graphics& g,
                            juce::Rectangle<float> area, bool isDown,
@@ -159,18 +197,34 @@ private:
         {
             // Check if this is a C note (start of octave)
             const bool isCNote = (midiNoteNumber % 12 == 0);
-            
-            // Draw C notes with gray background for octave visualization
-            if (isCNote)
-            {
-                g.setColour (findColour (whiteNoteColourId).interpolatedWith (juce::Colours::grey, 0.3f));
-            }
-            else
-            {
-                g.setColour (findColour (whiteNoteColourId));
-            }
-            
+
+            // Determine base fill – C notes get a subtle grey tint for octave markers
+            juce::Colour baseFill = isCNote
+                ? findColour (whiteNoteColourId).interpolatedWith (juce::Colours::grey, 0.3f)
+                : findColour (whiteNoteColourId);
+
+            // Blend maqam highlight colour over white key (alpha-blended for subtlety)
+            const auto highlight = noteHighlightColours[(size_t)(midiNoteNumber % 12)];
+            if (highlight.getAlpha() > 0)
+                baseFill = baseFill.interpolatedWith (highlight, 0.45f);
+
+            const bool demoNoteActive = demoActiveNotes[(size_t) midiNoteNumber];
+            const auto demoHighlight = demoNoteActive
+                ? demoNoteAccentColours[(size_t) midiNoteNumber]
+                : juce::Colour (0xFF9FD8B5);
+            if (demoNoteActive)
+                baseFill = baseFill.interpolatedWith (demoHighlight, 0.68f);
+
+            g.setColour (baseFill);
             g.fillRect (area);
+
+            if (demoNoteActive)
+            {
+                auto glowArea = area.reduced (1.5f, 3.0f);
+                auto accentArea = glowArea.removeFromTop (area.getHeight() * 0.14f);
+                g.setColour (demoHighlight.withAlpha (0.92f));
+                g.fillRoundedRectangle (accentArea, 2.5f);
+            }
             
             // Draw separator lines
             g.setColour (findColour (keySeparatorLineColourId));
@@ -208,6 +262,28 @@ private:
         {
             g.setColour (findColour (blackNoteColourId));
             g.fillRect (area);
+
+            // Draw a coloured top-band strip for maqam highlighting (keeps label readable)
+            const auto highlight = noteHighlightColours[(size_t)(midiNoteNumber % 12)];
+            if (highlight.getAlpha() > 0)
+            {
+                auto band = area.withHeight (area.getHeight() * 0.28f);
+                g.setColour (highlight.withAlpha (0.85f));
+                g.fillRect (band);
+            }
+
+            if (demoActiveNotes[(size_t) midiNoteNumber])
+            {
+                const auto demoHighlight = demoNoteAccentColours[(size_t) midiNoteNumber];
+                auto band = area.withHeight (area.getHeight() * 0.34f);
+                g.setColour (demoHighlight.withAlpha (0.94f));
+                g.fillRect (band);
+
+                auto outline = area.reduced (0.75f, 1.5f);
+                g.setColour (demoHighlight.brighter (0.15f).withAlpha (0.85f));
+                g.drawRoundedRectangle (outline, 2.0f, 1.2f);
+            }
+
             g.setColour (noteFillColour);
             g.drawRect (area, 0.5f);
 
@@ -237,9 +313,9 @@ private:
 
             const auto keyBounds = area.toNearestInt();
             g.setColour (colour);
-            g.setFont (12.0f);
+            g.setFont (15.0f);
 
-            const int labelHeight = 14;
+            const int labelHeight = 18;
             const int labelY = isBlackKey
                 ? (keyBounds.getY() + 18)
                 : (keyBounds.getBottom() - 34);
@@ -255,7 +331,10 @@ private:
             g.drawFittedText (noteClass, labelArea, juce::Justification::centred, 1);
         }
 
-        NoteLabelArray noteClassLabels;
+        NoteLabelArray  noteClassLabels;
+        NoteColourArray noteHighlightColours {}; // all transparent by default
+        std::array<bool, 128> demoActiveNotes {};
+        std::array<juce::Colour, 128> demoNoteAccentColours {};
         
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CustomMidiKeyboardComponent)
     };
@@ -283,10 +362,119 @@ private:
         
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KeyboardStateListener)
     };
-    
+
+    //==========================================================================
+    // Melody Player -- timer-driven note sequencer for maqam teaching demos
+    //==========================================================================
+    class MelodyPlayer : private juce::Timer
+    {
+    public:
+        using NoteCallback = std::function<void (int midiNote, float velocity)>;
+
+        MelodyPlayer() = default;
+        ~MelodyPlayer() override { stopTimer(); }
+
+        void setCallbacks (NoteCallback onOn, NoteCallback onOff, std::function<void()> onFinished)
+        {
+            noteOnCb     = std::move (onOn);
+            noteOffCb    = std::move (onOff);
+            finishedCb   = std::move (onFinished);
+        }
+
+        /** Play the Bayati teaching melody (Bayati on D3, ascending + descending phrase). */
+        void playBayatiDemo()
+        {
+            stop();
+            // Bayati on D3 (MIDI 62).
+            // Eb3 (MIDI 63) is the character quarter-tone note;
+            // OrientalScaleManager injects pitch-bend when routed through the bridge.
+            // Format: { midiNote, durationMs }
+            sequence = {
+                { 62, 350 }, // D3  -- root (tonic of Bayati)
+                { 63, 350 }, // Eb3 -- maqam character note (quarter-tone)
+                { 65, 350 }, // F3
+                { 67, 350 }, // G3
+                { 69, 500 }, // A3  -- upper neighbour
+                { 67, 250 }, // G3
+                { 69, 250 }, // A3
+                { 70, 350 }, // Bb3
+                { 72, 350 }, // C4
+                { 74, 600 }, // D4  -- octave climax
+                { 72, 300 }, // C4  -- descent begins
+                { 70, 300 }, // Bb3
+                { 69, 300 }, // A3
+                { 67, 300 }, // G3
+                { 65, 300 }, // F3
+                { 63, 300 }, // Eb3
+                { 62, 800 }, // D3  -- first cadence
+                { 62, 250 }, // D3  -- second phrase opens
+                { 63, 250 }, // Eb3
+                { 65, 250 }, // F3
+                { 67, 500 }, // G3
+                { 65, 250 }, // F3
+                { 63, 250 }, // Eb3
+                { 62, 900 }, // D3  -- final resolution
+            };
+            stepIndex   = 0;
+            noteOnPhase = true;
+            startTimer (10);
+        }
+
+        void stop()
+        {
+            stopTimer();
+            if (lastNote >= 0 && noteOffCb)
+                noteOffCb (lastNote, 0.f);
+            lastNote = -1;
+            sequence.clear();
+        }
+
+        bool isPlaying() const { return isTimerRunning(); }
+
+    private:
+        struct Step { int midiNote; int durationMs; };
+
+        void timerCallback() override
+        {
+            stopTimer();
+            if (stepIndex >= (int) sequence.size())
+            {
+                if (lastNote >= 0 && noteOffCb) noteOffCb (lastNote, 0.f);
+                lastNote = -1;
+                if (finishedCb) finishedCb();
+                return;
+            }
+            const auto& step = sequence[(size_t) stepIndex];
+            if (noteOnPhase)
+            {
+                if (lastNote >= 0 && noteOffCb) noteOffCb (lastNote, 0.f);
+                if (noteOnCb) noteOnCb (step.midiNote, 0.75f);
+                lastNote    = step.midiNote;
+                noteOnPhase = false;
+                startTimer (juce::jmax (80, step.durationMs - 40));
+            }
+            else
+            {
+                noteOnPhase = true;
+                ++stepIndex;
+                startTimer (40); // 40 ms silence between notes
+            }
+        }
+
+        NoteCallback noteOnCb, noteOffCb;
+        std::function<void()> finishedCb;
+        std::vector<Step> sequence;
+        int  stepIndex   = 0;
+        bool noteOnPhase = true;
+        int  lastNote    = -1;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MelodyPlayer)
+    };
+
     juce::MidiKeyboardState keyboardState;
     std::unique_ptr<KeyboardStateListener> keyboardListener;
     std::unique_ptr<CustomMidiKeyboardComponent> midiKeyboard;
+    MelodyPlayer melodyPlayer;
     juce::ComboBox programSelector;
     int currentProgramIndex { 0 };
     int numPrograms { 0 };

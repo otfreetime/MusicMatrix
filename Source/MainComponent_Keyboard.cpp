@@ -182,5 +182,122 @@ void MainComponent::refreshKeyboardProgramNoteLabels()
     }
 
     midiKeyboard->setNoteClassLabels (labels);
-
 }
+
+void MainComponent::refreshKeyboardHighlights()
+{
+    if (midiKeyboard == nullptr)
+        return;
+
+    using myapp::music::OrientalScaleManager;
+    using myapp::music::MaqamPreset;
+
+    const MaqamPreset preset   = maqamManager.getMaqam();
+    const auto scaleNotes      = OrientalScaleManager::getScaleNotes (preset);
+    const juce::Colour rootCol = OrientalScaleManager::getMaqamRootColour (preset);
+
+    // Root semitone per maqam: Bayati=D(2), Rast=C(0), Hijaz=D(2), Sika=E(4),
+    //                          Ajam=C(0), Nahawand=C(0), Saba=D(2), Kurd=D(2)
+    static constexpr int kRootSemitone[(int) MaqamPreset::count] = { 2, 0, 2, 4, 0, 0, 2, 2 };
+    const int rootSemitone = kRootSemitone[(int) preset];
+
+    const auto& intervalMap = OrientalScaleManager::getIntervalMap (preset);
+
+    CustomMidiKeyboardComponent::NoteColourArray colours;
+    colours.fill (juce::Colours::transparentBlack);
+
+    for (int s = 0; s < 12; ++s)
+    {
+        if (s == rootSemitone)
+        {
+            // Root: full saturated signature colour
+            colours[(size_t) s] = rootCol;
+        }
+        else if (scaleNotes[(size_t) s])
+        {
+            const float cents = intervalMap.centsOffset[(size_t) s];
+            if (std::abs (cents + 50.0f) < 0.1f)
+            {
+                // Microtonal (quarter-tone flat) note: warm orange tint
+                colours[(size_t) s] = juce::Colour (0xFFFF8C00).interpolatedWith (rootCol, 0.25f);
+            }
+            else
+            {
+                // Regular in-scale note: light tint of root colour
+                colours[(size_t) s] = rootCol.withSaturation (rootCol.getSaturation() * 0.6f)
+                                              .withBrightness (0.85f)
+                                              .withAlpha (0.75f);
+            }
+        }
+        // Out-of-scale remains transparentBlack (no highlight)
+    }
+
+    midiKeyboard->setNoteHighlightColours (colours);
+}
+
+void MainComponent::playDemoMelody()
+{
+    if (midiKeyboard == nullptr)
+        return;
+
+    // Ensure Bayati is selected so highlights + pitch-bend are correct
+    using myapp::music::MaqamPreset;
+    if (maqamManager.getMaqam() != MaqamPreset::bayati)
+    {
+        maqamManager.setMaqam (MaqamPreset::bayati);
+        uiController.getMaqamSelector()->setSelectedId (1, juce::sendNotification);
+    }
+
+    // Scroll keyboard to show D3 (MIDI 62)
+    midiKeyboard->setLowestVisibleKey (55); // G2 — a few keys before D3
+    midiKeyboard->clearDemoNotes();
+
+    const auto tonicAccentColour = juce::Colour (0xFFE2C46B);
+    const auto defaultDemoColour = juce::Colour (0xFF9FD8B5);
+
+    melodyPlayer.setCallbacks (
+        [this, tonicAccentColour, defaultDemoColour] (int note, float vel)
+        {
+            // Fire note visually on keyboard
+            if (midiKeyboard != nullptr)
+            {
+                const auto accent = (note % 12 == 2) ? tonicAccentColour : defaultDemoColour;
+                midiKeyboard->setDemoNoteActive (note, true, accent);
+            }
+
+            keyboardState.noteOn (1, note, vel);
+            // Route through normal MIDI path (includes maqam pitch-bend)
+            handleMidiNoteOn (note, vel);
+        },
+        [this] (int note, float /*vel*/)
+        {
+            if (midiKeyboard != nullptr)
+                midiKeyboard->setDemoNoteActive (note, false);
+
+            keyboardState.noteOff (1, note, 0.f);
+            handleMidiNoteOff (note, 0.f);
+        },
+        [this]
+        {
+            stopDemoMelody();
+        }
+    );
+
+    melodyPlayer.playBayatiDemo();
+
+    // Toggle button label while playing
+    if (auto* btn = uiController.getDemoMelodyButton())
+        btn->setButtonText ("Stop Play Byati");
+}
+
+void MainComponent::stopDemoMelody()
+{
+    melodyPlayer.stop();
+
+    if (midiKeyboard != nullptr)
+        midiKeyboard->clearDemoNotes();
+
+    if (auto* btn = uiController.getDemoMelodyButton())
+        btn->setButtonText ("Play Bayati Demo");
+}
+

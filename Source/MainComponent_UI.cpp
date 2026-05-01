@@ -91,6 +91,10 @@ void MainComponent::initialiseUI()
     
     addAndMakeVisible (midiKeyboard.get());
 
+    // Apply initial maqam highlight colours (Bayati is default)
+    refreshKeyboardProgramNoteLabels();
+    refreshKeyboardHighlights();
+
     // Create program selector
     programSelector.addItem ("-- Select Instrument --", 1);
     programSelector.setEditableText (false);
@@ -108,19 +112,15 @@ void MainComponent::initialiseUI()
     };
     addAndMakeVisible (programSelector);
 
-    // Maqam selector setup
-    uiController.getMaqamSelector()->addItem ("Bayati",  1);
-    uiController.getMaqamSelector()->addItem ("Rast",    2);
-    uiController.getMaqamSelector()->addItem ("Hijaz",   3);
-    uiController.getMaqamSelector()->addItem ("Sika",    4);
-    uiController.getMaqamSelector()->setSelectedId (1, juce::dontSendNotification);
-    
+    // Maqam selector setup (items already added in UIController constructor)
     uiController.getMaqamSelector()->onChange = [this]
     {
         using myapp::music::MaqamPreset;
-        const auto presets = std::array<MaqamPreset, 4> {
-            MaqamPreset::bayati, MaqamPreset::rast,
-            MaqamPreset::hijaz,  MaqamPreset::sika
+        const auto presets = std::array<MaqamPreset, 8> {
+            MaqamPreset::bayati,   MaqamPreset::rast,
+            MaqamPreset::hijaz,    MaqamPreset::sika,
+            MaqamPreset::ajam,     MaqamPreset::nahawand,
+            MaqamPreset::saba,     MaqamPreset::kurd
         };
         const int idx = uiController.getMaqamSelector()->getSelectedId() - 1;
         if (idx >= 0 && idx < (int) presets.size())
@@ -134,7 +134,17 @@ void MainComponent::initialiseUI()
             }
 
             refreshKeyboardProgramNoteLabels();
+            refreshKeyboardHighlights();
         }
+    };;
+
+    // Demo melody button
+    uiController.getDemoMelodyButton()->onClick = [this]
+    {
+        if (melodyPlayer.isPlaying())
+            stopDemoMelody();
+        else
+            playDemoMelody();
     };
 
     // Plugin filter selector
@@ -264,12 +274,14 @@ void MainComponent::resized()
     
     currentY += buttonHeight + buttonSpacing;  // Move down, NO OVERLAP
     
-    // Row 2: Open Audio File, Play, Stop
+    // Row 2: Open Audio File, Play, Stop, Demo Melody
     auto row2 = juce::Rectangle<int> (margin, currentY,
                                        getWidth() - (margin * 2), buttonHeight);
     uiController.getOpenAudioFileButton()->setBounds (row2.removeFromLeft (140).reduced (2, 0));
     uiController.getPlayButton()->setBounds (row2.removeFromLeft (100).reduced (2, 0));
     uiController.getStopButton()->setBounds (row2.removeFromLeft (100).reduced (2, 0));
+    row2.removeFromLeft (16); // spacer
+    uiController.getDemoMelodyButton()->setBounds (row2.removeFromLeft (160).reduced (2, 0));
     
     currentY += buttonHeight + buttonSpacing;  // Move down, NO OVERLAP
     

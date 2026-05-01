@@ -11,6 +11,10 @@ enum class MaqamPreset
     rast,
     hijaz,
     sika,
+    ajam,
+    nahawand,
+    saba,
+    kurd,
     count   // sentinel -- keep last
 };
 
@@ -34,6 +38,12 @@ public:
     void processMidiBuffer (juce::MidiBuffer& midi, int channel = 1) const;
 
     static const MaqamIntervalMap& getIntervalMap (MaqamPreset preset);
+
+    /** Returns a 12-element bool array: true = semitone belongs to the maqam scale. */
+    static std::array<bool, 12> getScaleNotes (MaqamPreset preset);
+
+    /** Returns the signature UI colour for this maqam (saturated root colour). */
+    static juce::Colour getMaqamRootColour (MaqamPreset preset);
 
 private:
     float getCentsForNote (int midiNote) const;

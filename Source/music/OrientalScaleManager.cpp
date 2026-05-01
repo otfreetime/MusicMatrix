@@ -40,9 +40,30 @@ static const MaqamIntervalMap kMaps[] =
     //    C     C#    D     Eb    E     F     F#    G     Ab    A     Bb    B
     { "Sika",
       { 0.f,  0.f,  0.f,  0.f, -50.f,  0.f,  0.f,  0.f, -50.f,  0.f,  0.f, -50.f } },
+
+    //  Ajam on C: C  D  E  F  G  A  B  C  (pure major scale, no microtonals)
+    //    C     C#    D     Eb    E     F     F#    G     Ab    A     Bb    B
+    { "Ajam",
+      { 0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f } },
+
+    //  Nahawand on C: C  D  Eb  F  G  Ab  B  C  (harmonic minor)
+    //    C     C#    D     Eb    E     F     F#    G     Ab    A     Bb    B
+    { "Nahawand",
+      { 0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f } },
+
+    //  Saba on D: D  Eb-  F  Gb  A  Bb  C  (Gb = F#, all standard 12-TET except Eb-)
+    //  Eb- = Eb lowered 50c
+    //    C     C#    D     Eb    E     F     F#    G     Ab    A     Bb    B
+    { "Saba",
+      { 0.f,  0.f,  0.f, -50.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f } },
+
+    //  Kurd on D: D  Eb  F  G  A  Bb  C  D  (standard Phrygian, no microtonals)
+    //    C     C#    D     Eb    E     F     F#    G     Ab    A     Bb    B
+    { "Kurd",
+      { 0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f,  0.f } },
 };
 
-static_assert ((int) MaqamPreset::count == 4,
+static_assert ((int) MaqamPreset::count == 8,
                "kMaps[] must be updated when new MaqamPreset values are added");
 
 // ---------------------------------------------------------------
@@ -108,4 +129,58 @@ void OrientalScaleManager::processMidiBuffer (juce::MidiBuffer& midi, int channe
 
     midi.swapWith (transformed);
 }
+
+// ---------------------------------------------------------------
+// Scale membership: true = semitone is part of the maqam scale
+// Order matches MaqamPreset enum: bayati, rast, hijaz, sika, ajam, nahawand, saba, kurd
+// Semitone index:                  C   C#    D    Eb    E     F    F#    G    Ab    A    Bb    B
+// ---------------------------------------------------------------
+static const bool kScaleNotes[8][12] =
+{
+    // Bayati on D:   D  Eb- F  G  A  Bb  C
+    /* bayati   */ { false,false, true, true,false, true,false, true,false, true, true, false },
+    // Rast on C:     C  D  E-  F  G  A  Bb-
+    /* rast     */ { true, false, true,false, true, true,false, true,false, true, true, false },
+    // Hijaz on D:    D  Eb-  F#  G  A  Bb  C
+    /* hijaz    */ { true, false, true, true,false,false, true, true,false, true, true, false },
+    // Sika on E-:    E-  F  G  Ab-  Bb  C  D
+    /* sika     */ { true, false, true,false, true, true,false, true, true,false, true, false },
+    // Ajam on C:     C  D  E  F  G  A  B
+    /* ajam     */ { true, false, true,false, true, true,false, true,false, true,false, true  },
+    // Nahawand on C: C  D  Eb  F  G  Ab  B
+    /* nahawand */ { true, false, true, true,false, true,false, true, true,false,false, true  },
+    // Saba on D:     D  Eb-  F  Gb  A  Bb  C
+    /* saba     */ { true,  true, true, true,false, true, true,false,false, true, true, false },
+    // Kurd on D:     D  Eb  F  G  A  Bb  C
+    /* kurd     */ { true, false, true, true,false, true,false, true,false, true, true, false },
+};
+
+// Signature root colours per maqam
+static const juce::uint32 kRootColours[8] =
+{
+    0xFF8B5E3C,  // Bayati  — Oud Brown
+    0xFF2E7D32,  // Rast    — Royal Green
+    0xFFFFAB00,  // Hijaz   — Amber/Gold
+    0xFFE65100,  // Sika    — Sunset Orange
+    0xFF1E88E5,  // Ajam    — Sky Blue
+    0xFF6A1B9A,  // Nahawand— Deep Purple
+    0xFF546E7A,  // Saba    — Slate Gray
+    0xFFC62828,  // Kurd    — Crimson Red
+};
+
+std::array<bool, 12> OrientalScaleManager::getScaleNotes (MaqamPreset preset)
+{
+    const int idx = juce::jlimit (0, (int) MaqamPreset::count - 1, (int) preset);
+    std::array<bool, 12> result;
+    for (int i = 0; i < 12; ++i)
+        result[(size_t) i] = kScaleNotes[idx][i];
+    return result;
+}
+
+juce::Colour OrientalScaleManager::getMaqamRootColour (MaqamPreset preset)
+{
+    const int idx = juce::jlimit (0, (int) MaqamPreset::count - 1, (int) preset);
+    return juce::Colour (kRootColours[idx]);
+}
+
 } // namespace myapp::music
