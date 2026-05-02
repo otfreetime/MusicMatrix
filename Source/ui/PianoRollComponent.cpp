@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "../debug/DebugLogger.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -6,15 +7,30 @@
 
 PianoRollComponent::PianoRollComponent()
 {
-    // Create scroll bars
-    horizontalScroll = std::make_unique<juce::ScrollBar> (true);  // true = horizontal
-    verticalScroll = std::make_unique<juce::ScrollBar> (false);   // false = vertical
+    DEBUG_LOG ("PianoRollComponent: Constructor started");
     
+    // Create scroll bars
+    DEBUG_LOG ("PianoRollComponent: Creating horizontal scroll...");
+    horizontalScroll = std::make_unique<juce::ScrollBar> (true);  // true = horizontal
+    DEBUG_LOG ("PianoRollComponent: Horizontal scroll created");
+    
+    DEBUG_LOG ("PianoRollComponent: Creating vertical scroll...");
+    verticalScroll = std::make_unique<juce::ScrollBar> (false);   // false = vertical
+    DEBUG_LOG ("PianoRollComponent: Vertical scroll created");
+    
+    DEBUG_LOG ("PianoRollComponent: Adding scroll listeners...");
     horizontalScroll->addListener (this);
     verticalScroll->addListener (this);
     
+    DEBUG_LOG ("PianoRollComponent: Adding horizontal scroll to parent...");
     addAndMakeVisible (horizontalScroll.get());
+    DEBUG_LOG ("PianoRollComponent: Horizontal scroll added");
+    
+    DEBUG_LOG ("PianoRollComponent: Adding vertical scroll to parent...");
     addAndMakeVisible (verticalScroll.get());
+    DEBUG_LOG ("PianoRollComponent: Vertical scroll added");
+    
+    DEBUG_LOG ("PianoRollComponent: Constructor finished");
 }
 
 PianoRollComponent::~PianoRollComponent()

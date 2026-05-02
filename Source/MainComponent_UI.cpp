@@ -273,44 +273,27 @@ void MainComponent::initialiseUI()
     };
     addAndMakeVisible (salalemElNashhButton.get());
 
-    // Create Sequencer (Channel Rack + Piano Roll) - TEMPORARILY DISABLED
-    // sequencerPanel = std::make_unique<SequencerPanel>();
+    // Create Sequencer (Channel Rack + Piano Roll)
+    sequencerPanel = std::make_unique<SequencerPanel>();
     
     // Create sequencer toggle button
     sequencerToggleButton = std::make_unique<juce::TextButton> ("Sequencer");
-    sequencerToggleButton->setTooltip ("Sequencer disabled - under development");
-    sequencerToggleButton->setEnabled (false);  // DISABLED
-    /*
-    sequencerPanel = std::make_unique<SequencerPanel>();
+    sequencerToggleButton->setTooltip ("Toggle Channel Rack & Piano Roll sequencer UI");
     sequencerToggleButton->setClickingTogglesState (true);
+    sequencerToggleButton->setToggleState (false, juce::dontSendNotification);
     sequencerToggleButton->onClick = [this]
     {
         if (sequencerPanel != nullptr)
+        {
             sequencerPanel->setVisible (sequencerToggleButton->getToggleState());
+            DEBUG_LOG ("Sequencer: Toggle clicked - visible=" + juce::String ((int)sequencerToggleButton->getToggleState()));
+        }
     };
     addAndMakeVisible (sequencerToggleButton.get());
     addAndMakeVisible (sequencerPanel.get());
-    sequencerPanel->setVisible (false);
-    */
-    addAndMakeVisible (sequencerToggleButton.get());  // Add button only
+    sequencerPanel->setVisible (false);  // Start hidden (toggle-controlled)
     
-    DEBUG_LOG ("Sequencer: DISABLED for debugging");
-
-    // Setup sequencer callbacks for MIDI playback integration
-    if (sequencerPanel != nullptr && sequencerPanel->getPianoRoll() != nullptr)
-    {
-        sequencerPanel->getPianoRoll()->onNoteAdded = [this] (const PianoRollComponent::Note& note)
-        {
-            juce::ignoreUnused (note);
-            DEBUG_LOG ("Sequencer: Note added to piano roll");
-        };
-
-        sequencerPanel->onSequenceChanged = [this]
-        {
-            DEBUG_LOG ("Sequencer: Sequence changed");
-            // Could update MelodyPlayer or sync to loaded plugin here
-        };
-    }
+    DEBUG_LOG ("Sequencer: Panel created and added to parent (starts hidden)");
 
     // Plugin filter selector
     uiController.getPluginFilterSelector()->addItem ("All", 1);
@@ -490,9 +473,7 @@ void MainComponent::resized()
         pluginSubWindowContainer.repositionEmbeddedWindow();
     }
     
-    // ===== SEQUENCER PANEL (optional overlay/replacement for container) =====
-    // DISABLED - sequencer panel not created
-    /*
+    // ===== SEQUENCER PANEL - ENABLED =====
     if (sequencerPanel != nullptr)
     {
         sequencerPanel->setBounds (
@@ -502,7 +483,6 @@ void MainComponent::resized()
             containerHeight
         );
     }
-    */
     
     // ===== PANEL 5: Virtual Keyboard (Bottom) =====
     // Octave selector bar sits ABOVE the keyboard

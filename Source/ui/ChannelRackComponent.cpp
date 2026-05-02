@@ -1,4 +1,5 @@
 #include "ChannelRackComponent.h"
+#include "../debug/DebugLogger.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -6,13 +7,19 @@
 
 ChannelRackComponent::ChannelRackComponent()
 {
-    setNumChannels (16);  // Default to 16 channels like FL Studio
+    DEBUG_LOG ("ChannelRackComponent: Constructor started");
     
-    // Create vertical scroll bar
+    // Create vertical scroll bar FIRST before setting up channels
+    DEBUG_LOG ("ChannelRackComponent: Creating scroll bar...");
     scrollBar = std::make_unique<juce::ScrollBar> (false);  // false = vertical
     scrollBar->setRangeLimits (0, 1);
     scrollBar->addListener (this);
     addAndMakeVisible (scrollBar.get());
+    
+    DEBUG_LOG ("ChannelRackComponent: Setting up channels...");
+    setNumChannels (16);  // Default to 16 channels like FL Studio
+    
+    DEBUG_LOG ("ChannelRackComponent: Constructor finished");
 }
 
 ChannelRackComponent::~ChannelRackComponent()

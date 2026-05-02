@@ -1,4 +1,5 @@
 #include "SequencerPanel.h"
+#include "../debug/DebugLogger.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -6,16 +7,27 @@
 
 SequencerPanel::SequencerPanel()
 {
+    DEBUG_LOG ("SequencerPanel: Constructor started");
+    
     // Create child components
+    DEBUG_LOG ("SequencerPanel: Creating ChannelRackComponent...");
     channelRack = std::make_unique<ChannelRackComponent>();
+    DEBUG_LOG ("SequencerPanel: ChannelRack created");
+    
+    DEBUG_LOG ("SequencerPanel: Creating PianoRollComponent...");
     pianoRoll = std::make_unique<PianoRollComponent>();
+    DEBUG_LOG ("SequencerPanel: PianoRoll created");
 
+    DEBUG_LOG ("SequencerPanel: Adding children to parent...");
     addAndMakeVisible (channelRack.get());
     addAndMakeVisible (pianoRoll.get());
+    DEBUG_LOG ("SequencerPanel: Children added");
 
+    DEBUG_LOG ("SequencerPanel: Setting up callbacks...");
     // Setup callbacks
     setupChannelRackCallbacks();
     setupPianoRollCallbacks();
+    DEBUG_LOG ("SequencerPanel: Constructor finished");
 }
 
 SequencerPanel::~SequencerPanel()
